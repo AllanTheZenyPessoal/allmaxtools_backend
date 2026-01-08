@@ -1,0 +1,41 @@
+Generic single-database configuration with environment variable support.
+
+This Alembic configuration is set up to:
+1. Read database credentials from environment variables
+2. Auto-detect model changes from database/db_models.py
+3. Support both online and offline migration modes
+
+## Common Commands
+
+### Create a new migration (auto-detect changes):
+```bash
+alembic revision --autogenerate -m "description of changes"
+```
+
+### Apply all pending migrations:
+```bash
+alembic upgrade head
+```
+
+### Rollback one migration:
+```bash
+alembic downgrade -1
+```
+
+### View migration history:
+```bash
+alembic history
+```
+
+### View current revision:
+```bash
+alembic current
+```
+
+## Environment Variables
+
+- DATABASE_USERNAME: Database username (default: root)
+- DATABASE_PASSWORD: Database password (default: 123)
+- DATABASE_HOST: Database host (default: localhost)
+- DATABASE_PORT: Database port (default: 3306)
+- DATABASE: Database name (default: prototype)

@@ -1,53 +1,38 @@
-version: '3.8'
+version: "3.8"
 
 services:
-  # Backend API
   api:
-    build:
-      context: .
-      dockerfile: dev.Dockerfile
+    build: .
     container_name: allmaxtools-api
     ports:
       - "8181:8000"
     environment:
-      - DATABASE_USERNAME=root
-      - DATABASE_PASSWORD=123
-      - DATABASE_HOST=mysql
-      - DATABASE_PORT=3306
-      - DATABASE=prototype
-    volumes:
-      - ./app:/app/app  # Hot reload for development
+      DATABASE_USERNAME: root
+      DATABASE_PASSWORD: 123
+      DATABASE_HOST: mysql
+      DATABASE_PORT: 3306
+      DATABASE: prototype
     depends_on:
-      mysql:
-        condition: service_healthy
+      - mysql
     networks:
       - allmaxtools-network
     restart: unless-stopped
 
-  # MySQL Database
   mysql:
-    build:
-      context: ./mysql
-      dockerfile: Dockerfile
+    image: mysql:8.0
     container_name: allmaxtools-mysql
     ports:
       - "3307:3306"
     environment:
-      - MYSQL_ROOT_PASSWORD=123
-      - MYSQL_DATABASE=prototype
-      - MYSQL_USER=prototype
-      - MYSQL_PASSWORD=123
-      - TZ=America/Sao_Paulo
+      MYSQL_ROOT_PASSWORD: 123
+      MYSQL_DATABASE: prototype
+      MYSQL_USER: prototype
+      MYSQL_PASSWORD: 123
+      TZ: America/Sao_Paulo
     volumes:
       - mysql-data:/var/lib/mysql
     networks:
       - allmaxtools-network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p123"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
     restart: unless-stopped
 
 networks:
@@ -56,4 +41,7 @@ networks:
 
 volumes:
   mysql-data:
-    driver: local
+
+
+
+

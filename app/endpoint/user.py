@@ -128,19 +128,19 @@ async def deleteUser(user_id, db):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")  
   
 async def checkLogin(user, db):     
-    try: 
+    try:  
         db_user = db.query(db_models.User).filter(db_models.User.email == user.email).first()
-        
+           
         if db_user is None:
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
         # Para superadmin, usar comparação direta, para outros usar hash
-        if db_user.username == 'superadmin':
-            if user.password != db_user.password:
-                raise HTTPException(status_code=401, detail="Invalid email or password")
-        else:
-            if not verify_password(user.password, db_user.password):
-                raise HTTPException(status_code=401, detail="Invalid email or password")
+        # if db_user.username == 'superadmin':
+        #     if user.password != db_user.password:
+        #         raise HTTPException(status_code=401, detail="Invalid email or password")
+        # else:
+        if not verify_password(user.password, db_user.password):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
         
         if not db_user.active:
             raise HTTPException(status_code=403, detail="User account is disabled")

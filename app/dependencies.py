@@ -1,21 +1,17 @@
-from fastapi import FastAPI, Depends 
+from fastapi import Depends 
 from sqlalchemy.orm import Session
 from typing import Annotated
-from datetime import timedelta 
-from database import db_models
-from database.database import engine, SessionLocal
-  
-# Criação das tabelas do banco de dados
-db_models.Base.metadata.create_all(bind=engine)
+from database.database import get_session_local
 
-# Função para obter uma sessão do banco de dados
+
+# Função para obter uma sessão do banco de dados (LAZY - não conecta no import)
 def get_db():
+    SessionLocal = get_session_local()
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-db_dependency = Annotated[Session, Depends(get_db)]
 
-  
+db_dependency = Annotated[Session, Depends(get_db)]

@@ -39,8 +39,8 @@ def hash_password(password: str) -> str:
 
 def generate_superuser_token():
     """Gera token para o superuser"""
-    email = "superuser@prototype.com"
-    username = "superuser"
+    email = "superadmin@prototype.com"
+    username = "superadmin"
     id_user = 1
     
     # Token com validade de 30 dias
@@ -68,23 +68,26 @@ ON DUPLICATE KEY UPDATE Cep = Cep;
 SET @address_id = LAST_INSERT_ID();
 
 -- Criar superuser com token válido
-INSERT INTO User (UserName, Password, Email, Phone, Token, Address_IdAddress, Active) 
+INSERT INTO User (UserName, Password, Email, Phone, Token, Address_IdAddress, Active, role, company_id) 
 VALUES (
-    'superuser', 
+    'superadmin', 
     '{password}',
-    'superuser@prototype.com', 
+    'superadmin@prototype.com', 
     '+55 11 99999-9999', 
     '{token}',
     @address_id,
-    1
+    1,
+    'superadmin',
+    NULL
 ) ON DUPLICATE KEY UPDATE 
     Password = VALUES(Password),
     Token = VALUES(Token),
+    role = VALUES(role),
     UpdatedAt = CURRENT_TIMESTAMP;
 
 -- Verificação
 SELECT 'Superuser created successfully!' as Status,
-       'Email: superuser@prototype.com' as Login,
+       'Email: superadmin@prototype.com' as Login,
        'Password: 123123123' as Password,
        'Token válido por 30 dias' as TokenInfo;
 """
@@ -110,6 +113,6 @@ if __name__ == "__main__":
     token = generate_superuser_token()
     print(f"\n🔑 Token gerado: {token}")
     print(f"\n📋 Credenciais do superuser:")
-    print(f"   Email: superuser@prototype.com")
+    print(f"   Email: superadmin@prototype.com")
     print(f"   Senha: 123123123")
     print(f"   Token válido até: {(datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)).isoformat()}")

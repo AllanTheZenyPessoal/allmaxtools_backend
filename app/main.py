@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import db_models
-from database.database import engine
+from database.database import init_db, get_engine, Base
 
 # Import all routes
 from routes import (
@@ -22,9 +22,9 @@ app = FastAPI(
 # Set CORS
 origins = [
     "*",
-    "http://localhost:3000",
-    "http://localhost:4200",
-    "http://localhost:8080",
+    # "http://localhost:3000",
+    # "http://localhost:4200",
+    # "http://localhost:8080",
 ]
 
 app.add_middleware(
@@ -35,8 +35,22 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# Create database tables
-db_models.Base.metadata.create_all(bind=engine)
+
+# Startup event - inicializa DB com retry (NÃO no import!)
+@app.on_event("startup")
+async def startup_event():
+    """
+    Inicializa conexão com banco de dados no startup.
+    Isso permite que o MySQL suba antes da API tentar conectar.
+    """
+    print("[API] Iniciando conexão com banco de dados...")
+    init_db()
+    
+    # Cria tabelas DEPOIS da conexão estar estabelecida
+    engine = get_engine()
+    db_models.Base.metadata.create_all(bind=engine)
+    print("[API] ✅ Tabelas criadas/verificadas com sucesso!")
+
 
 # Include all routers
 app.include_router(token_router)
@@ -67,12 +81,14 @@ async def get_config():
     Útil para desenvolvimento
     """
     import os
+    from database.database import get_engine, SQLALCHEMY_DATABASE_URL
+    
     return {
         "environment": "development",
         "version": "1.0.0",
         "auth_required": False,  # Em desenvolvimento, autenticação é opcional
         "cors_enabled": True,
-        "database": "sqlite" if "sqlite" in str(engine.url) else "mysql",
+        "database": "sqlite" if "sqlite" in SQLALCHEMY_DATABASE_URL else "mysql",
         "endpoints": {
             "token_generate": "/token_generate/",
             "docs": "/docs",

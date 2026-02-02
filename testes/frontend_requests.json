@@ -1,0 +1,122 @@
+{
+  "authHeaders": {
+    "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0QHRlc3QuY29tIiwidXNlcm5hbWUiOiJ0ZXN0dXNlciIsImlkX3VzZXIiOjEsInJvbGUiOiJzdXBlcmFkbWluIiwiY29tcGFueV9pZCI6MSwiZXhwIjoxOTk5OTk5OTk5fQ.test_signature"
+  },
+  "endpoints": {
+    "user": {
+      "login": { "method": "GET", "url": "http://127.0.0.1:8181/user/login/" },
+      "save": { "method": "GET", "url": "http://127.0.0.1:8181/user/save/" },
+      "detail": { "method": "GET", "url": "http://127.0.0.1:8181/user/{id}" }
+    },
+    "businessPartner": {
+      "save": { "method": "POST", "url": "http://127.0.0.1:8181/businnespartner/save/" },
+      "user_to_company": { "method": "POST", "url": "http://127.0.0.1:8181/businnespartner/user_to_company/" },
+      "edit": { "method": "PUT", "url": "http://127.0.0.1:8181/businnespartner/edit" },
+      "list": { "method": "GET", "url": "http://127.0.0.1:8181/businnespartner/list/" },
+      "detail": { "method": "GET", "url": "http://127.0.0.1:8181/businnespartner/{id}" }
+    },
+    "salesOrder": {
+      "save": { "method": "POST", "url": "http://127.0.0.1:8181/salesorder/save" },
+      "edit": { "method": "PUT", "url": "http://127.0.0.1:8181/salesorder/edit" },
+      "list": { "method": "GET", "url": "http://127.0.0.1:8181/salesorder/list" }
+    },
+    "company": {
+      "save": { "method": "GET", "url": "http://127.0.0.1:8181/company/save/" },
+      "detail": { "method": "GET", "url": "http://127.0.0.1:8181/company/{id}" }
+    }
+  },
+  "payloads": {
+    "address": {
+      "cep": "01310200",
+      "city": "São Paulo",
+      "estate": "SP",
+      "adress": "Rua Augusta",
+      "number": 500,
+      "neighborhood": "Consolação",
+      "complement": "Apto 10"
+    },
+    "company": {
+      "CompanyBase": {
+        "razao_social": "Nova Empresa LTDA",
+        "nome_fantasia": "Nova Empresa",
+        "cnpj": "11223344000155",
+        "email": "nova@empresa.com",
+        "phone": "1140001000",
+        "id_address": null,
+        "active": true
+      },
+      "AddressBase": {
+        "cep": "01310200",
+        "city": "São Paulo",
+        "estate": "SP",
+        "adress": "Rua Augusta",
+        "number": 500,
+        "neighborhood": "Consolação",
+        "complement": "Apto 10"
+      }
+    },
+    "branch": {
+      "name": "Nova Filial",
+      "code": "NFIL001",
+      "id_company": 1
+    },
+    "businessPartner": {
+      "razao_social": "Novo Parceiro LTDA",
+      "nome_fantasia": "Novo Parceiro",
+      "cnpj": "55667788000111",
+      "inscricao_estadual": "111222333",
+      "inscricao_municipal": "444555666",
+      "cnae": "4711300",
+      "suframa": "",
+      "regime_especial": 0,
+      "sugestao_limite_credito": 5000.0,
+      "email": "novoparceiro@teste.com",
+      "phone": "1150001000",
+      "observation": "Novo parceiro para testes",
+      "id_address": {
+        "cep": "04567890",
+        "city": "Rio de Janeiro",
+        "estate": "RJ",
+        "adress": "Rua Copacabana",
+        "number": 200,
+        "neighborhood": "Copacabana",
+        "complement": null
+      },
+      "id_company": 1
+    },
+    "freight": {
+      "name": "Frete Expresso",
+      "code": "FRTEXP",
+      "id_company": 1
+    },
+    "paymentMethod": {
+      "name": "PIX",
+      "code": "PIX001",
+      "id_company": 1
+    },
+    "paymentTerm": {
+      "name": "60 dias",
+      "code": "60D",
+      "id_company": 1
+    },
+    "utilization": {
+      "name": "Industrialização",
+      "code": "IND001",
+      "id_company": 1
+    },
+    "user": {
+      "username": "novousuario",
+      "email": "novousuario@teste.com",
+      "password": "senha123456",
+      "phone": "11966666666"
+    },
+    "salesOrder": {
+      "redespacho": 0,
+      "data_entrega": "2026-01-20",
+      "discount": 10.0,
+      "observation": "Novo pedido de teste",
+      "id_business_partner": 1,
+      "id_company_branch": 1
+    }
+  }
+}

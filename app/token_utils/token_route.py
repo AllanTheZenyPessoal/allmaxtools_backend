@@ -1,9 +1,14 @@
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import  OAuth2PasswordRequestForm 
+from pydantic import BaseModel
 from database import db_models
 from token_utils.apikey_generator import create_access_token, decode_access_token, ACCESS_TOKEN_EXPIRE_MINUTES 
 from dependencies import db_dependency
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 router = APIRouter(
     # prefix="/address",
@@ -18,34 +23,41 @@ async def login_for_access_token(
     db: db_dependency,
     form_data: OAuth2PasswordRequestForm = Depends()
 ):
+    return await _authenticate_user(response, db, form_data.username, form_data.password)
+
+
+@router.post("/token_generate_json/", response_model=dict)
+async def login_for_access_token_json(
+    response: Response, 
+    db: db_dependency,
+    login_data: LoginRequest
+):
+    return await _authenticate_user(response, db, login_data.username, login_data.password)
+
+
+async def _authenticate_user(response: Response, db, username: str, password: str):
     # Check user credentials
     try:
+        
         # Query todos os campos necessários incluindo role e company_id
         db_user = db.query(db_models.User).filter(
-            db_models.User.email == form_data.username
+            db_models.User.email == username
         ).first()
-        
+
         # Verificar senha - temporariamente usando texto plano para superadmin
         if db_user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, 
                 detail="Incorrect email or password"
             )
-            
-        # Para superadmin, usar comparação direta, para outros usar hash
-        if db_user.username == 'superadmin':
-            if form_data.password != db_user.password:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED, 
-                    detail="Incorrect email or password"
-                )
-        else:
-            from endpoint.user import verify_password
-            if not verify_password(form_data.password, db_user.password):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED, 
-                    detail="Incorrect email or password"
-                )
+ 
+        # Verificar senha usando hash bcrypt para todos os usuários
+        from endpoint.user import verify_password
+        if not verify_password(password, db_user.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, 
+                detail="Incorrect email or password"
+            )
         
         # Verificar se o usuário está ativo
         if db_user.active is False:

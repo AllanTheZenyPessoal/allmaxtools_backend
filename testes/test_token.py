@@ -79,15 +79,15 @@ class TestTokenGenerate:
 class TestTokenValidation:
     """Testes para validação de tokens nas requisições."""
 
-    def test_protected_endpoint_without_token(self, client, mock_company):
+    def test_protected_endpoint_without_token(self, client, superadmin_user):
         """Testa acesso a endpoint protegido sem token."""
-        response = client.get(f"/company/{mock_company.id_company}")
+        response = client.get(f"/user/read/{superadmin_user.id_user}")
         assert response.status_code == 401
 
-    def test_protected_endpoint_with_invalid_token(self, client, mock_company):
+    def test_protected_endpoint_with_invalid_token(self, client, superadmin_user):
         """Testa acesso a endpoint protegido com token inválido."""
         response = client.get(
-            f"/company/{mock_company.id_company}",
+            f"/user/read/{superadmin_user.id_user}",
             headers={"Authorization": "Bearer invalid_token_here"}
         )
         assert response.status_code == 401

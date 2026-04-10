@@ -1,14 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import db_models
-from database.database import init_db, get_engine, Base
+from database.database import init_db, get_engine
 
-# Import all routes
-from routes import (
-    address, branch, businnesspartner, company, 
-    freight, paymentmethod, paymentterms, salesorder, 
-    user, utilization, sincronization
-)
+# Import active routes
+from routes import user, crypto
 
 from token_utils.token_route import router as token_router
 
@@ -43,6 +39,12 @@ async def startup_event():
     Inicializa conexão com banco de dados no startup.
     Isso permite que o MySQL suba antes da API tentar conectar.
     """
+    import os
+
+    if os.getenv("TESTING") == "1":
+        print("[API] Startup em modo de teste: init_db ignorado.")
+        return
+
     print("[API] Iniciando conexão com banco de dados...")
     init_db()
     
@@ -54,17 +56,8 @@ async def startup_event():
 
 # Include all routers
 app.include_router(token_router)
-app.include_router(address.router)
-app.include_router(branch.router)
-app.include_router(businnesspartner.router)
-app.include_router(company.router)
-app.include_router(freight.router)
-app.include_router(paymentmethod.router)
-app.include_router(paymentterms.router)
-app.include_router(salesorder.router)
 app.include_router(user.router)
-app.include_router(utilization.router)
-app.include_router(sincronization.router)
+app.include_router(crypto.router)
 
 @app.get("/")
 async def root():

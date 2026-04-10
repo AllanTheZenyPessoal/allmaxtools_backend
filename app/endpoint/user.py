@@ -21,6 +21,8 @@ async def readUser(user_id, db):
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
         return user
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")   
  

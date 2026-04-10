@@ -11,8 +11,8 @@ from token_utils.token_route import router as token_router
 # Create FastAPI app
 app = FastAPI(
     title="Prototype API",
-    description="This is a prototype API",
-    version="1.0.0"
+    version="1.0.0",
+    root_path="/api"
 )
 
 # Set CORS

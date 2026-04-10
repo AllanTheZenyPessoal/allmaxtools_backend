@@ -1,10 +1,12 @@
 import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional, cast
+import json
 
 import httpx
 from fastapi import HTTPException, WebSocket
 from sqlalchemy.orm import Session
+import websockets
 
 from database import db_models, base_models
 from database.database import get_session_local
@@ -38,6 +40,7 @@ class WebSocketConnectionManager:
 
 class BinanceMarketClient:
     BASE_URL = "https://api.binance.com/api/v3"
+    BASE_WS_URL = "wss://stream.binance.com:9443"
 
     async def fetch_ticker_24h(self, pair: str) -> Dict:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -53,6 +56,42 @@ class BinanceMarketClient:
             "high_24h": float(data["highPrice"]),
             "low_24h": float(data["lowPrice"]),
             "volume_quote_24h": float(data["quoteVolume"]),
+        }
+
+    async def connect_trade_stream(self, pairs: List[str]):
+        streams = "/".join([f"{pair.lower()}@trade" for pair in pairs])
+        stream_url = f"{self.BASE_WS_URL}/stream?streams={streams}"
+        return await websockets.connect(stream_url, ping_interval=20, ping_timeout=20)
+
+    @staticmethod
+    def parse_trade_message(raw_message: str) -> Optional[Dict]:
+        message = json.loads(raw_message)
+        data = message.get("data") if isinstance(message, dict) else None
+        if not isinstance(data, dict):
+            return None
+
+        pair = data.get("s")
+        if not pair:
+            return None
+
+        price = data.get("p")
+        quantity = data.get("q")
+
+        if price is None or quantity is None:
+            return None
+
+        price_float = float(price)
+        qty_float = float(quantity)
+
+        return {
+            "pair": pair,
+            "symbol": pair.replace("USDT", ""),
+            "price_usdt": price_float,
+            "price_change_percent_24h": None,
+            "high_24h": None,
+            "low_24h": None,
+            # Trade stream does not include 24h quote volume; store trade notional as best-effort.
+            "volume_quote_24h": price_float * qty_float,
         }
 
 
@@ -172,54 +211,109 @@ class CryptoCollectorService:
 
     async def _run_loop(self) -> None:
         SessionLocal = get_session_local()
-
         while self._is_running:
-            db = SessionLocal()
             try:
-                snapshots = []
-                for pair in self._pairs:
-                    ticker = await self._market_client.fetch_ticker_24h(pair)
-                    snapshot = db_models.CryptoPriceSnapshot(
-                        symbol=ticker["symbol"],
-                        pair=ticker["pair"],
-                        price_usdt=ticker["price_usdt"],
-                        price_change_percent_24h=ticker["price_change_percent_24h"],
-                        high_24h=ticker["high_24h"],
-                        low_24h=ticker["low_24h"],
-                        volume_quote_24h=ticker["volume_quote_24h"],
-                    )
-                    db.add(snapshot)
-                    snapshots.append(snapshot)
+                websocket = await self._market_client.connect_trade_stream(self._pairs)
+                async with websocket:
+                    while self._is_running:
+                        raw_message = await asyncio.wait_for(websocket.recv(), timeout=60)
+                        ticker = self._market_client.parse_trade_message(cast(str, raw_message))
 
-                state = self._get_or_create_state(db)
-                setattr(state, "updated_at", datetime.utcnow())
-                db.commit()
+                        if not ticker:
+                            continue
 
-                payload = {
-                    "type": "price_update",
-                    "data": [
-                        {
-                            "symbol": s.symbol,
-                            "pair": s.pair,
-                            "price_usdt": s.price_usdt,
-                            "price_change_percent_24h": s.price_change_percent_24h,
-                            "high_24h": s.high_24h,
-                            "low_24h": s.low_24h,
-                            "volume_quote_24h": s.volume_quote_24h,
-                            "created_at": s.created_at.isoformat() if s.created_at else datetime.utcnow().isoformat(),
-                        }
-                        for s in snapshots
-                    ],
-                }
-                await self._websocket_manager.broadcast(payload)
-            except httpx.HTTPError:
-                db.rollback()
+                        if ticker["symbol"] not in ["BTC", "ETH"]:
+                            continue
+
+                        db = SessionLocal()
+                        try:
+                            snapshot = db_models.CryptoPriceSnapshot(
+                                symbol=ticker["symbol"],
+                                pair=ticker["pair"],
+                                price_usdt=ticker["price_usdt"],
+                                price_change_percent_24h=ticker["price_change_percent_24h"],
+                                high_24h=ticker["high_24h"],
+                                low_24h=ticker["low_24h"],
+                                volume_quote_24h=ticker["volume_quote_24h"],
+                            )
+                            db.add(snapshot)
+
+                            state = self._get_or_create_state(db)
+                            setattr(state, "updated_at", datetime.utcnow())
+                            db.commit()
+
+                            payload = {
+                                "type": "price_update",
+                                "data": [
+                                    {
+                                        "symbol": snapshot.symbol,
+                                        "pair": snapshot.pair,
+                                        "price_usdt": snapshot.price_usdt,
+                                        "price_change_percent_24h": snapshot.price_change_percent_24h,
+                                        "high_24h": snapshot.high_24h,
+                                        "low_24h": snapshot.low_24h,
+                                        "volume_quote_24h": snapshot.volume_quote_24h,
+                                        "created_at": snapshot.created_at.isoformat() if snapshot.created_at else datetime.utcnow().isoformat(),
+                                    }
+                                ],
+                            }
+                            await self._websocket_manager.broadcast(payload)
+                        except Exception:
+                            db.rollback()
+                        finally:
+                            db.close()
+            except asyncio.CancelledError:
+                raise
             except Exception:
-                db.rollback()
-            finally:
-                db.close()
+                # Fall back to REST polling on websocket connectivity issues.
+                await self._run_rest_polling_once(SessionLocal)
+                await asyncio.sleep(max(self._interval_seconds, 2))
 
-            await asyncio.sleep(self._interval_seconds)
+    async def _run_rest_polling_once(self, SessionLocal) -> None:
+        db = SessionLocal()
+        try:
+            snapshots = []
+            for pair in self._pairs:
+                ticker = await self._market_client.fetch_ticker_24h(pair)
+                snapshot = db_models.CryptoPriceSnapshot(
+                    symbol=ticker["symbol"],
+                    pair=ticker["pair"],
+                    price_usdt=ticker["price_usdt"],
+                    price_change_percent_24h=ticker["price_change_percent_24h"],
+                    high_24h=ticker["high_24h"],
+                    low_24h=ticker["low_24h"],
+                    volume_quote_24h=ticker["volume_quote_24h"],
+                )
+                db.add(snapshot)
+                snapshots.append(snapshot)
+
+            state = self._get_or_create_state(db)
+            setattr(state, "updated_at", datetime.utcnow())
+            db.commit()
+
+            payload = {
+                "type": "price_update",
+                "data": [
+                    {
+                        "symbol": s.symbol,
+                        "pair": s.pair,
+                        "price_usdt": s.price_usdt,
+                        "price_change_percent_24h": s.price_change_percent_24h,
+                        "high_24h": s.high_24h,
+                        "low_24h": s.low_24h,
+                        "volume_quote_24h": s.volume_quote_24h,
+                        "created_at": s.created_at.isoformat() if s.created_at else datetime.utcnow().isoformat(),
+                    }
+                    for s in snapshots
+                ],
+            }
+            await self._websocket_manager.broadcast(payload)
+        except httpx.HTTPError:
+            db.rollback()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
 
     @staticmethod
     def _get_or_create_state(db: Session) -> db_models.CryptoCollectorState:

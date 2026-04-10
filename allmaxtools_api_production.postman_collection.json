@@ -1,0 +1,299 @@
+{
+  "info": {
+    "name": "AllMaxTools API (Production)",
+    "description": "Collection para testar a API em producao via Nginx (/api).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://allmaxtools.com/api"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "email",
+      "value": "test@example.com"
+    },
+    {
+      "key": "password",
+      "value": "senha123456"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Root",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": [
+            "{{baseUrl}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Config",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/config",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "config"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Auth - Register",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"testuser\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"phone\": \"11999999999\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/register/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "auth",
+            "register",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Token - Generate (x-www-form-urlencoded)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "const data = pm.response.json();",
+              "if (data && data.access_token) {",
+              "  pm.collectionVariables.set('token', data.access_token);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "username",
+              "value": "{{email}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{password}}",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/token_generate/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "token_generate",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "User - List (Bearer)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/user/list/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "user",
+            "list",
+            ""
+          ]
+        }
+      }
+    },
+    {
+      "name": "Crypto - Play (Bearer + JSON)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"interval_seconds\": 5\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/crypto/play",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "play"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Crypto - Status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/crypto/status",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "status"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Crypto - Latest Prices",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/crypto/prices/latest",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "prices",
+            "latest"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Crypto - History BTC",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/crypto/prices/history/BTC?limit=100",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "prices",
+            "history",
+            "BTC"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "100"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Crypto - Stop (Bearer)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/crypto/stop",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "stop"
+          ]
+        }
+      }
+    }
+  ]
+}

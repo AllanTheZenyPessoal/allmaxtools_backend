@@ -39,60 +39,85 @@ class WebSocketConnectionManager:
 
 
 class BinanceMarketClient:
-    BASE_URL = "https://api.binance.com/api/v3"
-    BASE_WS_URL = "wss://stream.binance.com:9443"
+    # Binance blocks US-hosted servers (HTTP 451). Using Kraken (WS) + CoinGecko (REST).
+    KRAKEN_WS_URL = "wss://ws.kraken.com/v2"
+    COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
+
+    _KRAKEN_SYMBOL_MAP: Dict[str, Dict[str, str]] = {
+        "BTC/USD": {"symbol": "BTC", "pair": "BTCUSDT"},
+        "ETH/USD": {"symbol": "ETH", "pair": "ETHUSDT"},
+    }
+    _PAIR_TO_COINGECKO: Dict[str, str] = {
+        "BTCUSDT": "bitcoin",
+        "ETHUSDT": "ethereum",
+    }
 
     async def fetch_ticker_24h(self, pair: str) -> Dict:
+        cg_id = self._PAIR_TO_COINGECKO.get(pair)
+        if not cg_id:
+            raise ValueError(f"Unknown pair: {pair}")
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{self.BASE_URL}/ticker/24hr", params={"symbol": pair})
+            response = await client.get(
+                self.COINGECKO_MARKETS_URL,
+                params={"vs_currency": "usd", "ids": cg_id},
+            )
             response.raise_for_status()
             data = response.json()
-
+        if not data:
+            raise ValueError(f"No data returned for {pair}")
+        item = data[0]
         return {
             "pair": pair,
             "symbol": pair.replace("USDT", ""),
-            "price_usdt": float(data["lastPrice"]),
-            "price_change_percent_24h": float(data["priceChangePercent"]),
-            "high_24h": float(data["highPrice"]),
-            "low_24h": float(data["lowPrice"]),
-            "volume_quote_24h": float(data["quoteVolume"]),
+            "price_usdt": float(item["current_price"]),
+            "price_change_percent_24h": float(item.get("price_change_percentage_24h") or 0),
+            "high_24h": float(item["high_24h"]) if item.get("high_24h") else None,
+            "low_24h": float(item["low_24h"]) if item.get("low_24h") else None,
+            "volume_quote_24h": float(item["total_volume"]) if item.get("total_volume") else None,
         }
 
     async def connect_trade_stream(self, pairs: List[str]):
-        streams = "/".join([f"{pair.lower()}@trade" for pair in pairs])
-        stream_url = f"{self.BASE_WS_URL}/stream?streams={streams}"
-        return await websockets.connect(stream_url, ping_interval=20, ping_timeout=20)
+        kraken_symbols = [p.replace("USDT", "/USD") for p in pairs]
+        ws = await websockets.connect(self.KRAKEN_WS_URL, ping_interval=20, ping_timeout=20)
+        await ws.send(json.dumps({
+            "method": "subscribe",
+            "params": {"channel": "ticker", "symbol": kraken_symbols},
+        }))
+        return ws
 
-    @staticmethod
-    def parse_trade_message(raw_message: str) -> Optional[Dict]:
-        message = json.loads(raw_message)
-        data = message.get("data") if isinstance(message, dict) else None
-        if not isinstance(data, dict):
+    @classmethod
+    def parse_trade_message(cls, raw_message: str) -> Optional[List[Dict]]:
+        try:
+            message = json.loads(raw_message)
+        except Exception:
             return None
-
-        pair = data.get("s")
-        if not pair:
+        if not isinstance(message, dict):
             return None
-
-        price = data.get("p")
-        quantity = data.get("q")
-
-        if price is None or quantity is None:
+        if message.get("channel") != "ticker":
             return None
-
-        price_float = float(price)
-        qty_float = float(quantity)
-
-        return {
-            "pair": pair,
-            "symbol": pair.replace("USDT", ""),
-            "price_usdt": price_float,
-            "price_change_percent_24h": None,
-            "high_24h": None,
-            "low_24h": None,
-            # Trade stream does not include 24h quote volume; store trade notional as best-effort.
-            "volume_quote_24h": price_float * qty_float,
-        }
+        if message.get("type") not in ("snapshot", "update"):
+            return None
+        data = message.get("data")
+        if not isinstance(data, list):
+            return None
+        results = []
+        for item in data:
+            info = cls._KRAKEN_SYMBOL_MAP.get(item.get("symbol", ""))
+            if not info:
+                continue
+            price = item.get("last")
+            if price is None:
+                continue
+            results.append({
+                "pair": info["pair"],
+                "symbol": info["symbol"],
+                "price_usdt": float(price),
+                "price_change_percent_24h": float(item.get("change_pct") or 0),
+                "high_24h": float(item["high"]) if item.get("high") else None,
+                "low_24h": float(item["low"]) if item.get("low") else None,
+                "volume_quote_24h": float(item["volume"]) if item.get("volume") else None,
+            })
+        return results if results else None
 
 
 class CryptoCollectorService:
@@ -214,14 +239,18 @@ class CryptoCollectorService:
         print("[Collector] Loop started", flush=True)
         while self._is_running:
             try:
-                print("[Collector] Connecting to Binance stream...", flush=True)
+                print("[Collector] Connecting to Kraken stream...", flush=True)
+                kraken_symbols = [p.replace("USDT", "/USD") for p in self._pairs]
                 async with websockets.connect(
-                    f"{self._market_client.BASE_WS_URL}/stream?streams="
-                    + "/".join([f"{p.lower()}@trade" for p in self._pairs]),
+                    self._market_client.KRAKEN_WS_URL,
                     ping_interval=20,
                     ping_timeout=20,
                 ) as ws:
-                    print("[Collector] Connected to Binance stream", flush=True)
+                    await ws.send(json.dumps({
+                        "method": "subscribe",
+                        "params": {"channel": "ticker", "symbol": kraken_symbols},
+                    }))
+                    print("[Collector] Connected and subscribed to Kraken stream", flush=True)
                     while self._is_running:
                         try:
                             raw_message = await asyncio.wait_for(ws.recv(), timeout=60)
@@ -229,61 +258,62 @@ class CryptoCollectorService:
                             print("[Collector] recv() timeout — reconnecting", flush=True)
                             break
 
-                        ticker = self._market_client.parse_trade_message(cast(str, raw_message))
+                        tickers = self._market_client.parse_trade_message(cast(str, raw_message))
 
-                        if not ticker:
+                        if not tickers:
                             continue
 
-                        if ticker["symbol"] not in ["BTC", "ETH"]:
-                            continue
+                        for ticker in tickers:
+                            if ticker["symbol"] not in ["BTC", "ETH"]:
+                                continue
 
-                        db = SessionLocal()
-                        try:
-                            snapshot = db_models.CryptoPriceSnapshot(
-                                symbol=ticker["symbol"],
-                                pair=ticker["pair"],
-                                price_usdt=ticker["price_usdt"],
-                                price_change_percent_24h=ticker["price_change_percent_24h"],
-                                high_24h=ticker["high_24h"],
-                                low_24h=ticker["low_24h"],
-                                volume_quote_24h=ticker["volume_quote_24h"],
-                            )
-                            db.add(snapshot)
+                            db = SessionLocal()
+                            try:
+                                snapshot = db_models.CryptoPriceSnapshot(
+                                    symbol=ticker["symbol"],
+                                    pair=ticker["pair"],
+                                    price_usdt=ticker["price_usdt"],
+                                    price_change_percent_24h=ticker["price_change_percent_24h"],
+                                    high_24h=ticker["high_24h"],
+                                    low_24h=ticker["low_24h"],
+                                    volume_quote_24h=ticker["volume_quote_24h"],
+                                )
+                                db.add(snapshot)
 
-                            state = self._get_or_create_state(db)
-                            setattr(state, "updated_at", datetime.utcnow())
-                            db.commit()
+                                state = self._get_or_create_state(db)
+                                setattr(state, "updated_at", datetime.utcnow())
+                                db.commit()
 
-                            print(f"[Collector] Saved {ticker['symbol']} @ {ticker['price_usdt']}", flush=True)
+                                print(f"[Collector] Saved {ticker['symbol']} @ {ticker['price_usdt']}", flush=True)
 
-                            payload = {
-                                "type": "price_update",
-                                "data": [
-                                    {
-                                        "symbol": snapshot.symbol,
-                                        "pair": snapshot.pair,
-                                        "price_usdt": snapshot.price_usdt,
-                                        "price_change_percent_24h": snapshot.price_change_percent_24h,
-                                        "high_24h": snapshot.high_24h,
-                                        "low_24h": snapshot.low_24h,
-                                        "volume_quote_24h": snapshot.volume_quote_24h,
-                                        "created_at": snapshot.created_at.isoformat() if snapshot.created_at else datetime.utcnow().isoformat(),
-                                    }
-                                ],
-                            }
-                            await self._websocket_manager.broadcast(payload)
-                        except Exception as db_err:
-                            print(f"[Collector] DB error: {db_err}", flush=True)
-                            db.rollback()
-                        finally:
-                            db.close()
+                                payload = {
+                                    "type": "price_update",
+                                    "data": [
+                                        {
+                                            "symbol": snapshot.symbol,
+                                            "pair": snapshot.pair,
+                                            "price_usdt": snapshot.price_usdt,
+                                            "price_change_percent_24h": snapshot.price_change_percent_24h,
+                                            "high_24h": snapshot.high_24h,
+                                            "low_24h": snapshot.low_24h,
+                                            "volume_quote_24h": snapshot.volume_quote_24h,
+                                            "created_at": snapshot.created_at.isoformat() if snapshot.created_at else datetime.utcnow().isoformat(),
+                                        }
+                                    ],
+                                }
+                                await self._websocket_manager.broadcast(payload)
+                            except Exception as db_err:
+                                print(f"[Collector] DB error: {db_err}", flush=True)
+                                db.rollback()
+                            finally:
+                                db.close()
             except asyncio.CancelledError:
                 print("[Collector] Loop cancelled", flush=True)
                 raise
             except Exception as e:
-                print(f"[Collector] Stream error: {type(e).__name__}: {e} — falling back to REST", flush=True)
+                print(f"[Collector] Kraken stream error: {type(e).__name__}: {e} — falling back to REST", flush=True)
                 await self._run_rest_polling_once(SessionLocal)
-                await asyncio.sleep(max(self._interval_seconds, 2))
+                await asyncio.sleep(max(self._interval_seconds, 5))
 
     async def _run_rest_polling_once(self, SessionLocal) -> None:
         print("[Collector] REST fallback polling...", flush=True)

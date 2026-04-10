@@ -211,12 +211,24 @@ class CryptoCollectorService:
 
     async def _run_loop(self) -> None:
         SessionLocal = get_session_local()
+        print("[Collector] Loop started", flush=True)
         while self._is_running:
             try:
-                websocket = await self._market_client.connect_trade_stream(self._pairs)
-                async with websocket:
+                print("[Collector] Connecting to Binance stream...", flush=True)
+                async with websockets.connect(
+                    f"{self._market_client.BASE_WS_URL}/stream?streams="
+                    + "/".join([f"{p.lower()}@trade" for p in self._pairs]),
+                    ping_interval=20,
+                    ping_timeout=20,
+                ) as ws:
+                    print("[Collector] Connected to Binance stream", flush=True)
                     while self._is_running:
-                        raw_message = await asyncio.wait_for(websocket.recv(), timeout=60)
+                        try:
+                            raw_message = await asyncio.wait_for(ws.recv(), timeout=60)
+                        except asyncio.TimeoutError:
+                            print("[Collector] recv() timeout — reconnecting", flush=True)
+                            break
+
                         ticker = self._market_client.parse_trade_message(cast(str, raw_message))
 
                         if not ticker:
@@ -242,6 +254,8 @@ class CryptoCollectorService:
                             setattr(state, "updated_at", datetime.utcnow())
                             db.commit()
 
+                            print(f"[Collector] Saved {ticker['symbol']} @ {ticker['price_usdt']}", flush=True)
+
                             payload = {
                                 "type": "price_update",
                                 "data": [
@@ -258,18 +272,21 @@ class CryptoCollectorService:
                                 ],
                             }
                             await self._websocket_manager.broadcast(payload)
-                        except Exception:
+                        except Exception as db_err:
+                            print(f"[Collector] DB error: {db_err}", flush=True)
                             db.rollback()
                         finally:
                             db.close()
             except asyncio.CancelledError:
+                print("[Collector] Loop cancelled", flush=True)
                 raise
-            except Exception:
-                # Fall back to REST polling on websocket connectivity issues.
+            except Exception as e:
+                print(f"[Collector] Stream error: {type(e).__name__}: {e} — falling back to REST", flush=True)
                 await self._run_rest_polling_once(SessionLocal)
                 await asyncio.sleep(max(self._interval_seconds, 2))
 
     async def _run_rest_polling_once(self, SessionLocal) -> None:
+        print("[Collector] REST fallback polling...", flush=True)
         db = SessionLocal()
         try:
             snapshots = []
@@ -308,9 +325,11 @@ class CryptoCollectorService:
                 ],
             }
             await self._websocket_manager.broadcast(payload)
-        except httpx.HTTPError:
+        except httpx.HTTPError as e:
+            print(f"[Collector] REST HTTP error: {e}", flush=True)
             db.rollback()
-        except Exception:
+        except Exception as e:
+            print(f"[Collector] REST unexpected error: {type(e).__name__}: {e}", flush=True)
             db.rollback()
         finally:
             db.close()

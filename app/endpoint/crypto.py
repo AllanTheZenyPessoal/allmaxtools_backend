@@ -234,6 +234,121 @@ class CryptoCollectorService:
 
         return base_models.CryptoHistoryResponse(symbol=normalized, items=items)
 
+    def history_by_date_range(
+        self,
+        db: Session,
+        symbol: str,
+        start_date: datetime,
+        end_date: datetime,
+    ) -> base_models.CryptoHistoryByDateResponse:
+        normalized = symbol.upper()
+        if normalized not in ["BTC", "ETH"]:
+            raise HTTPException(status_code=400, detail="symbol must be BTC or ETH")
+
+        if end_date < start_date:
+            raise HTTPException(status_code=400, detail="end_date must be greater than or equal to start_date")
+
+        rows = (
+            db.query(db_models.CryptoPriceSnapshot)
+            .filter(db_models.CryptoPriceSnapshot.symbol == normalized)
+            .filter(db_models.CryptoPriceSnapshot.created_at >= start_date)
+            .filter(db_models.CryptoPriceSnapshot.created_at <= end_date)
+            .order_by(db_models.CryptoPriceSnapshot.created_at.asc())
+            .all()
+        )
+
+        items: List[base_models.CryptoTickerResponse] = []
+        for item in rows:
+            parsed = self._to_ticker_response(item)
+            if parsed is not None:
+                items.append(parsed)
+
+        return base_models.CryptoHistoryByDateResponse(
+            symbol=normalized,
+            start_date=start_date,
+            end_date=end_date,
+            items=items,
+        )
+
+    def register_trade(
+        self,
+        db: Session,
+        trade_type: str,
+        payload: base_models.CryptoTradeCreateRequest,
+    ) -> base_models.CryptoTradeResponse:
+        normalized_type = trade_type.lower()
+        if normalized_type not in ["buy", "sell"]:
+            raise HTTPException(status_code=400, detail="trade_type must be buy or sell")
+
+        normalized_symbol = payload.symbol.upper()
+        if normalized_symbol not in ["BTC", "ETH"]:
+            raise HTTPException(status_code=400, detail="symbol must be BTC or ETH")
+
+        if payload.quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+
+        if payload.unit_price_usdt <= 0:
+            raise HTTPException(status_code=400, detail="unit_price_usdt must be greater than 0")
+
+        executed_at = payload.executed_at or datetime.utcnow()
+        total_usdt = payload.quantity * payload.unit_price_usdt
+
+        trade = db_models.CryptoTradeHistory(
+            trade_type=normalized_type,
+            symbol=normalized_symbol,
+            quantity=payload.quantity,
+            unit_price_usdt=payload.unit_price_usdt,
+            total_usdt=total_usdt,
+            executed_at=executed_at,
+        )
+        db.add(trade)
+        db.commit()
+        db.refresh(trade)
+
+        return self._to_trade_response(trade)
+
+    def trade_history(
+        self,
+        db: Session,
+        start_date: datetime,
+        end_date: datetime,
+        symbol: Optional[str] = None,
+        trade_type: Optional[str] = None,
+    ) -> base_models.CryptoTradeHistoryResponse:
+        if end_date < start_date:
+            raise HTTPException(status_code=400, detail="end_date must be greater than or equal to start_date")
+
+        query = (
+            db.query(db_models.CryptoTradeHistory)
+            .filter(db_models.CryptoTradeHistory.executed_at >= start_date)
+            .filter(db_models.CryptoTradeHistory.executed_at <= end_date)
+        )
+
+        normalized_symbol = None
+        if symbol:
+            normalized_symbol = symbol.upper()
+            if normalized_symbol not in ["BTC", "ETH"]:
+                raise HTTPException(status_code=400, detail="symbol must be BTC or ETH")
+            query = query.filter(db_models.CryptoTradeHistory.symbol == normalized_symbol)
+
+        normalized_trade_type = None
+        if trade_type:
+            normalized_trade_type = trade_type.lower()
+            if normalized_trade_type not in ["buy", "sell"]:
+                raise HTTPException(status_code=400, detail="trade_type must be buy or sell")
+            query = query.filter(db_models.CryptoTradeHistory.trade_type == normalized_trade_type)
+
+        rows = query.order_by(db_models.CryptoTradeHistory.executed_at.asc()).all()
+        items = [self._to_trade_response(row) for row in rows]
+
+        return base_models.CryptoTradeHistoryResponse(
+            start_date=start_date,
+            end_date=end_date,
+            symbol=normalized_symbol,
+            trade_type=normalized_trade_type,
+            items=items,
+        )
+
     async def _run_loop(self) -> None:
         SessionLocal = get_session_local()
         print("[Collector] Loop started", flush=True)
@@ -286,6 +401,8 @@ class CryptoCollectorService:
 
                                 print(f"[Collector] Saved {ticker['symbol']} @ {ticker['price_usdt']}", flush=True)
 
+                                snapshot_created_at = cast(Any, snapshot).created_at
+
                                 payload = {
                                     "type": "price_update",
                                     "data": [
@@ -297,7 +414,7 @@ class CryptoCollectorService:
                                             "high_24h": snapshot.high_24h,
                                             "low_24h": snapshot.low_24h,
                                             "volume_quote_24h": snapshot.volume_quote_24h,
-                                            "created_at": snapshot.created_at.isoformat() if snapshot.created_at else datetime.utcnow().isoformat(),
+                                            "created_at": snapshot_created_at.isoformat() if snapshot_created_at else datetime.utcnow().isoformat(),
                                         }
                                     ],
                                 }
@@ -388,6 +505,20 @@ class CryptoCollectorService:
             high_24h=cast(Optional[float], row_any.high_24h),
             low_24h=cast(Optional[float], row_any.low_24h),
             volume_quote_24h=cast(Optional[float], row_any.volume_quote_24h),
+            created_at=cast(datetime, row_any.created_at),
+        )
+
+    @staticmethod
+    def _to_trade_response(row: db_models.CryptoTradeHistory) -> base_models.CryptoTradeResponse:
+        row_any = cast(Any, row)
+        return base_models.CryptoTradeResponse(
+            id_trade=cast(int, row_any.id_trade),
+            trade_type=cast(str, row_any.trade_type),
+            symbol=cast(str, row_any.symbol),
+            quantity=cast(float, row_any.quantity),
+            unit_price_usdt=cast(float, row_any.unit_price_usdt),
+            total_usdt=cast(float, row_any.total_usdt),
+            executed_at=cast(datetime, row_any.executed_at),
             created_at=cast(datetime, row_any.created_at),
         )
 

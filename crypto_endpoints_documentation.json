@@ -1,0 +1,139 @@
+{
+  "title": "Crypto Endpoints - Historico por periodo e operacoes de compra/venda",
+  "base_path": "/api/crypto",
+  "notes": [
+    "Datas devem ser enviadas em formato ISO 8601 (ex: 2026-04-01T00:00:00).",
+    "symbol aceita apenas BTC ou ETH.",
+    "Endpoints de compra e venda exigem Bearer token no header Authorization."
+  ],
+  "endpoints": [
+    {
+      "name": "Historico de precos por intervalo",
+      "method": "POST",
+      "path": "/crypto/prices/history/range",
+      "auth_required": false,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "request_payload": {
+        "symbol": "BTC",
+        "start_date": "2026-04-01T00:00:00",
+        "end_date": "2026-04-07T23:59:59"
+      },
+      "success_response_example": {
+        "symbol": "BTC",
+        "start_date": "2026-04-01T00:00:00",
+        "end_date": "2026-04-07T23:59:59",
+        "items": [
+          {
+            "symbol": "BTC",
+            "pair": "BTCUSDT",
+            "price_usdt": 69350.21,
+            "price_change_percent_24h": 1.92,
+            "high_24h": 69900.0,
+            "low_24h": 68100.1,
+            "volume_quote_24h": 2123456789.12,
+            "created_at": "2026-04-03T15:30:10.123456"
+          }
+        ]
+      },
+      "error_response_example": {
+        "detail": "end_date must be greater than or equal to start_date"
+      }
+    },
+    {
+      "name": "Cadastrar compra de criptomoeda",
+      "method": "POST",
+      "path": "/crypto/trades/buy",
+      "auth_required": true,
+      "headers": {
+        "Authorization": "Bearer <token>",
+        "Content-Type": "application/json"
+      },
+      "request_payload": {
+        "symbol": "BTC",
+        "quantity": 0.015,
+        "unit_price_usdt": 68000.5,
+        "executed_at": "2026-04-23T10:15:00"
+      },
+      "success_response_example": {
+        "id_trade": 1,
+        "trade_type": "buy",
+        "symbol": "BTC",
+        "quantity": 0.015,
+        "unit_price_usdt": 68000.5,
+        "total_usdt": 1020.0075,
+        "executed_at": "2026-04-23T10:15:00",
+        "created_at": "2026-04-23T10:15:02.553217"
+      },
+      "error_response_example": {
+        "detail": "symbol must be BTC or ETH"
+      }
+    },
+    {
+      "name": "Cadastrar venda de criptomoeda",
+      "method": "POST",
+      "path": "/crypto/trades/sell",
+      "auth_required": true,
+      "headers": {
+        "Authorization": "Bearer <token>",
+        "Content-Type": "application/json"
+      },
+      "request_payload": {
+        "symbol": "ETH",
+        "quantity": 0.35,
+        "unit_price_usdt": 3450.0,
+        "executed_at": "2026-04-23T11:00:00"
+      },
+      "success_response_example": {
+        "id_trade": 2,
+        "trade_type": "sell",
+        "symbol": "ETH",
+        "quantity": 0.35,
+        "unit_price_usdt": 3450.0,
+        "total_usdt": 1207.5,
+        "executed_at": "2026-04-23T11:00:00",
+        "created_at": "2026-04-23T11:00:03.013221"
+      },
+      "error_response_example": {
+        "detail": "quantity must be greater than 0"
+      }
+    },
+    {
+      "name": "Historico de compras e vendas por intervalo",
+      "method": "POST",
+      "path": "/crypto/trades/history",
+      "auth_required": false,
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "request_payload": {
+        "start_date": "2026-04-01T00:00:00",
+        "end_date": "2026-04-30T23:59:59",
+        "symbol": "BTC",
+        "trade_type": "buy"
+      },
+      "success_response_example": {
+        "start_date": "2026-04-01T00:00:00",
+        "end_date": "2026-04-30T23:59:59",
+        "symbol": "BTC",
+        "trade_type": "buy",
+        "items": [
+          {
+            "id_trade": 1,
+            "trade_type": "buy",
+            "symbol": "BTC",
+            "quantity": 0.015,
+            "unit_price_usdt": 68000.5,
+            "total_usdt": 1020.0075,
+            "executed_at": "2026-04-23T10:15:00",
+            "created_at": "2026-04-23T10:15:02.553217"
+          }
+        ]
+      },
+      "error_response_example": {
+        "detail": "trade_type must be buy or sell"
+      }
+    }
+  ]
+}

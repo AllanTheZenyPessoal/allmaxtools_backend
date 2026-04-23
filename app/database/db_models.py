@@ -42,3 +42,16 @@ class CryptoCollectorState(Base):
     started_at = Column("StartedAt", DateTime, nullable=True)
     stopped_at = Column("StoppedAt", DateTime, nullable=True)
     updated_at = Column("UpdatedAt", DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CryptoTradeHistory(Base):
+    __tablename__ = "crypto_trade_history"
+
+    id_trade = Column("IdTrade", Integer, primary_key=True, autoincrement=True)
+    trade_type = Column("TradeType", String(10), nullable=False)  # buy or sell
+    symbol = Column("Symbol", String(10), nullable=False)  # BTC or ETH
+    quantity = Column("Quantity", Float, nullable=False)
+    unit_price_usdt = Column("UnitPriceUSDT", Float, nullable=False)
+    total_usdt = Column("TotalUSDT", Float, nullable=False)
+    executed_at = Column("ExecutedAt", DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column("CreatedAt", DateTime, nullable=False, default=datetime.utcnow)

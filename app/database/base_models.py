@@ -57,3 +57,49 @@ class CryptoLatestResponse(BaseModel):
 class CryptoHistoryResponse(BaseModel):
     symbol: str
     items: List[CryptoTickerResponse]
+
+
+class CryptoPriceHistoryRangeRequest(BaseModel):
+    symbol: str
+    start_date: datetime
+    end_date: datetime
+
+
+class CryptoHistoryByDateResponse(BaseModel):
+    symbol: str
+    start_date: datetime
+    end_date: datetime
+    items: List[CryptoTickerResponse]
+
+
+class CryptoTradeCreateRequest(BaseModel):
+    symbol: str
+    quantity: float
+    unit_price_usdt: float
+    executed_at: Optional[datetime] = None
+
+
+class CryptoTradeResponse(BaseModel):
+    id_trade: int
+    trade_type: str
+    symbol: str
+    quantity: float
+    unit_price_usdt: float
+    total_usdt: float
+    executed_at: datetime
+    created_at: datetime
+
+
+class CryptoTradeHistoryRequest(BaseModel):
+    start_date: datetime
+    end_date: datetime
+    symbol: Optional[str] = None
+    trade_type: Optional[str] = None
+
+
+class CryptoTradeHistoryResponse(BaseModel):
+    start_date: datetime
+    end_date: datetime
+    symbol: Optional[str] = None
+    trade_type: Optional[str] = None
+    items: List[CryptoTradeResponse]

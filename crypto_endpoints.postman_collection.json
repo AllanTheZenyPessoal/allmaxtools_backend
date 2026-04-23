@@ -1,0 +1,168 @@
+{
+  "info": {
+    "name": "Crypto Trades and History",
+    "description": "Collection para testar historico de moedas por intervalo e cadastro de compra/venda BTC/ETH.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://allmaxtools.com/api"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "symbol",
+      "value": "BTC"
+    },
+    {
+      "key": "startDate",
+      "value": "2026-04-01T00:00:00"
+    },
+    {
+      "key": "endDate",
+      "value": "2026-04-30T23:59:59"
+    }
+  ],
+  "item": [
+    {
+      "name": "Crypto - Price History by Date Range",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"symbol\": \"{{symbol}}\",\n  \"start_date\": \"{{startDate}}\",\n  \"end_date\": \"{{endDate}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/crypto/prices/history/range",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "prices",
+            "history",
+            "range"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Crypto - Register Buy",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"symbol\": \"BTC\",\n  \"quantity\": 0.015,\n  \"unit_price_usdt\": 68000.5,\n  \"executed_at\": \"2026-04-23T10:15:00\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/crypto/trades/buy",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "trades",
+            "buy"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Crypto - Register Sell",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"symbol\": \"ETH\",\n  \"quantity\": 0.35,\n  \"unit_price_usdt\": 3450.0,\n  \"executed_at\": \"2026-04-23T11:00:00\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/crypto/trades/sell",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "trades",
+            "sell"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Crypto - Trades History by Date Range",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"start_date\": \"{{startDate}}\",\n  \"end_date\": \"{{endDate}}\",\n  \"symbol\": \"{{symbol}}\",\n  \"trade_type\": \"buy\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/crypto/trades/history",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "crypto",
+            "trades",
+            "history"
+          ]
+        }
+      }
+    }
+  ]
+}

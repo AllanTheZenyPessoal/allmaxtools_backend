@@ -1,4 +1,5 @@
-from typing import Annotated
+from typing import Annotated, Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
@@ -38,9 +39,43 @@ async def latest_prices(db: Session = Depends(get_db)):
     return crypto_collector_service.latest(db)
 
 
+@router.post("/prices/history/range", response_model=base_models.CryptoHistoryByDateResponse)
+async def price_history_by_date_range(
+    payload: base_models.CryptoPriceHistoryRangeRequest,
+    db: Session = Depends(get_db),
+):
+    return crypto_collector_service.history_by_date_range(db, payload.symbol, payload.start_date, payload.end_date)
+
+
 @router.get("/prices/history/{symbol}", response_model=base_models.CryptoHistoryResponse)
 async def price_history(symbol: str, limit: int = 100, db: Session = Depends(get_db)):
     return crypto_collector_service.history(db, symbol, limit)
+
+
+@router.post("/trades/buy", response_model=base_models.CryptoTradeResponse)
+async def create_buy_trade(
+    payload: base_models.CryptoTradeCreateRequest,
+    token: Annotated[dict, Depends(verify_token)],
+    db: Session = Depends(get_db),
+):
+    return crypto_collector_service.register_trade(db, "buy", payload)
+
+
+@router.post("/trades/sell", response_model=base_models.CryptoTradeResponse)
+async def create_sell_trade(
+    payload: base_models.CryptoTradeCreateRequest,
+    token: Annotated[dict, Depends(verify_token)],
+    db: Session = Depends(get_db),
+):
+    return crypto_collector_service.register_trade(db, "sell", payload)
+
+
+@router.post("/trades/history", response_model=base_models.CryptoTradeHistoryResponse)
+async def trades_history(
+    payload: base_models.CryptoTradeHistoryRequest,
+    db: Session = Depends(get_db),
+):
+    return crypto_collector_service.trade_history(db, payload.start_date, payload.end_date, payload.symbol, payload.trade_type)
 
 
 @router.websocket("/ws/prices")

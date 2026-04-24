@@ -81,6 +81,7 @@ class CryptoTradeCreateRequest(BaseModel):
 
 class CryptoTradeResponse(BaseModel):
     id_trade: int
+    user_id: int
     trade_type: str
     symbol: str
     quantity: float
@@ -88,6 +89,10 @@ class CryptoTradeResponse(BaseModel):
     total_usdt: float
     executed_at: datetime
     created_at: datetime
+    balance_usdt: Optional[float] = None
+    holding_quantity: Optional[float] = None
+    holding_value_usdt: Optional[float] = None
+    avg_cost_usdt: Optional[float] = None
 
 
 class CryptoTradeHistoryRequest(BaseModel):
@@ -103,3 +108,39 @@ class CryptoTradeHistoryResponse(BaseModel):
     symbol: Optional[str] = None
     trade_type: Optional[str] = None
     items: List[CryptoTradeResponse]
+
+
+class AccountMutationRequest(BaseModel):
+    amount_usdt: float
+    description: Optional[str] = None
+    user_id: Optional[int] = None
+
+
+class UserAccountResponse(BaseModel):
+    user_id: int
+    balance_usdt: float
+    total_deposited_usdt: float
+    total_withdrawn_usdt: float
+    updated_at: datetime
+
+
+class UserHoldingResponse(BaseModel):
+    symbol: str
+    quantity: float
+    avg_cost_usdt: float
+    current_price_usdt: float
+    current_value_usdt: float
+    updated_at: datetime
+
+
+class UserHoldingsResponse(BaseModel):
+    user_id: int
+    holdings: List[UserHoldingResponse]
+
+
+class PortfolioResponse(BaseModel):
+    user_id: int
+    balance_usdt: float
+    total_holdings_value_usdt: float
+    total_portfolio_value_usdt: float
+    holdings: List[UserHoldingResponse]

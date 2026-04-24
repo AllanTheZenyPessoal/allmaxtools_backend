@@ -4,7 +4,7 @@ from database import db_models
 from database.database import init_db, get_engine
 
 # Import active routes
-from routes import user, crypto
+from routes import user, crypto, account
 
 from token_utils.token_route import router as token_router
 
@@ -58,6 +58,7 @@ async def startup_event():
 app.include_router(token_router)
 app.include_router(user.router)
 app.include_router(crypto.router)
+app.include_router(account.router)
 
 @app.get("/")
 async def root():

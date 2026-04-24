@@ -275,6 +275,7 @@ class CryptoCollectorService:
         db: Session,
         trade_type: str,
         payload: base_models.CryptoTradeCreateRequest,
+        user_id: int,
     ) -> base_models.CryptoTradeResponse:
         normalized_type = trade_type.lower()
         if normalized_type not in ["buy", "sell"]:
@@ -293,7 +294,34 @@ class CryptoCollectorService:
         executed_at = payload.executed_at or datetime.utcnow()
         total_usdt = payload.quantity * payload.unit_price_usdt
 
+        account = self._get_or_create_account(db, user_id)
+        holding = self._get_or_create_holding(db, user_id, normalized_symbol)
+
+        if normalized_type == "buy":
+            if account.balance_usdt < total_usdt:
+                raise HTTPException(status_code=400, detail="insufficient saldo for this buy order")
+
+            previous_qty = holding.quantity or 0
+            new_qty = previous_qty + payload.quantity
+            total_cost_basis = (holding.avg_cost_usdt or 0) * previous_qty + total_usdt
+
+            holding.quantity = new_qty
+            holding.avg_cost_usdt = total_cost_basis / new_qty if new_qty > 0 else 0
+            holding.current_value_usdt = new_qty * payload.unit_price_usdt
+            account.balance_usdt -= total_usdt
+        else:
+            available_qty = holding.quantity or 0
+            if available_qty < payload.quantity:
+                raise HTTPException(status_code=400, detail="insufficient coin saldo for this sell order")
+
+            new_qty = available_qty - payload.quantity
+            holding.quantity = new_qty
+            holding.avg_cost_usdt = holding.avg_cost_usdt if new_qty > 0 else 0
+            holding.current_value_usdt = new_qty * payload.unit_price_usdt
+            account.balance_usdt += total_usdt
+
         trade = db_models.CryptoTradeHistory(
+            user_id=user_id,
             trade_type=normalized_type,
             symbol=normalized_symbol,
             quantity=payload.quantity,
@@ -302,16 +330,32 @@ class CryptoCollectorService:
             executed_at=executed_at,
         )
         db.add(trade)
+        db.flush()
+
+        self._append_account_transaction(
+            db,
+            user_id=user_id,
+            transaction_type=normalized_type,
+            amount_usdt=total_usdt,
+            symbol=normalized_symbol,
+            quantity=payload.quantity,
+            description=f"{normalized_type.upper()} {normalized_symbol}",
+            reference_trade_id=trade.id_trade,
+        )
+
         db.commit()
         db.refresh(trade)
+        db.refresh(account)
+        db.refresh(holding)
 
-        return self._to_trade_response(trade)
+        return self._to_trade_response(trade, account, holding)
 
     def trade_history(
         self,
         db: Session,
         start_date: datetime,
         end_date: datetime,
+        user_id: int,
         symbol: Optional[str] = None,
         trade_type: Optional[str] = None,
     ) -> base_models.CryptoTradeHistoryResponse:
@@ -320,6 +364,7 @@ class CryptoCollectorService:
 
         query = (
             db.query(db_models.CryptoTradeHistory)
+            .filter(db_models.CryptoTradeHistory.user_id == user_id)
             .filter(db_models.CryptoTradeHistory.executed_at >= start_date)
             .filter(db_models.CryptoTradeHistory.executed_at <= end_date)
         )
@@ -347,6 +392,104 @@ class CryptoCollectorService:
             symbol=normalized_symbol,
             trade_type=normalized_trade_type,
             items=items,
+        )
+
+    def get_account_balance(self, db: Session, user_id: int) -> base_models.UserAccountResponse:
+        account = self._get_or_create_account(db, user_id)
+        db.commit()
+        db.refresh(account)
+        return self._to_account_response(account)
+
+    def deposit_balance(
+        self,
+        db: Session,
+        acting_user: Dict[str, Any],
+        payload: base_models.AccountMutationRequest,
+    ) -> base_models.UserAccountResponse:
+        user_id = self._resolve_target_user_id(acting_user, payload.user_id)
+        if payload.amount_usdt <= 0:
+            raise HTTPException(status_code=400, detail="amount_usdt must be greater than 0")
+
+        account = self._get_or_create_account(db, user_id)
+        account.balance_usdt += payload.amount_usdt
+        account.total_deposited_usdt += payload.amount_usdt
+
+        self._append_account_transaction(
+            db,
+            user_id=user_id,
+            transaction_type="deposit",
+            amount_usdt=payload.amount_usdt,
+            description=payload.description or "Account deposit",
+        )
+
+        db.commit()
+        db.refresh(account)
+        return self._to_account_response(account)
+
+    def withdraw_balance(
+        self,
+        db: Session,
+        acting_user: Dict[str, Any],
+        payload: base_models.AccountMutationRequest,
+    ) -> base_models.UserAccountResponse:
+        user_id = self._resolve_target_user_id(acting_user, payload.user_id)
+        if payload.amount_usdt <= 0:
+            raise HTTPException(status_code=400, detail="amount_usdt must be greater than 0")
+
+        account = self._get_or_create_account(db, user_id)
+        if account.balance_usdt < payload.amount_usdt:
+            raise HTTPException(status_code=400, detail="insufficient saldo for withdrawal")
+
+        account.balance_usdt -= payload.amount_usdt
+        account.total_withdrawn_usdt += payload.amount_usdt
+
+        self._append_account_transaction(
+            db,
+            user_id=user_id,
+            transaction_type="withdraw",
+            amount_usdt=payload.amount_usdt,
+            description=payload.description or "Account withdrawal",
+        )
+
+        db.commit()
+        db.refresh(account)
+        return self._to_account_response(account)
+
+    def get_holdings(self, db: Session, user_id: int) -> base_models.UserHoldingsResponse:
+        account = self._get_or_create_account(db, user_id)
+        holdings = (
+            db.query(db_models.UserHolding)
+            .filter(db_models.UserHolding.user_id == user_id)
+            .order_by(db_models.UserHolding.symbol.asc())
+            .all()
+        )
+
+        items = [self._sync_holding_value(db, holding) for holding in holdings if (holding.quantity or 0) > 0]
+        db.commit()
+        return base_models.UserHoldingsResponse(
+            user_id=account.user_id,
+            holdings=[self._to_holding_response(item) for item in items],
+        )
+
+    def get_portfolio(self, db: Session, user_id: int) -> base_models.PortfolioResponse:
+        account = self._get_or_create_account(db, user_id)
+        holdings = (
+            db.query(db_models.UserHolding)
+            .filter(db_models.UserHolding.user_id == user_id)
+            .order_by(db_models.UserHolding.symbol.asc())
+            .all()
+        )
+
+        synced_holdings = [self._sync_holding_value(db, holding) for holding in holdings if (holding.quantity or 0) > 0]
+        total_holdings_value = sum((holding.current_value_usdt or 0) for holding in synced_holdings)
+        db.commit()
+
+        return base_models.PortfolioResponse(
+            user_id=account.user_id,
+            balance_usdt=account.balance_usdt,
+            total_holdings_value_usdt=total_holdings_value,
+            total_portfolio_value_usdt=account.balance_usdt + total_holdings_value,
+            holdings=[self._to_holding_response(item) for item in synced_holdings],
         )
 
     async def _run_loop(self) -> None:
@@ -491,6 +634,107 @@ class CryptoCollectorService:
         return state
 
     @staticmethod
+    def _resolve_target_user_id(acting_user: Dict[str, Any], requested_user_id: Optional[int]) -> int:
+        role = str(acting_user.get("role") or "user").lower()
+        token_user_id = acting_user.get("id_user")
+        if requested_user_id and role in ["admin", "superadmin"]:
+            return requested_user_id
+        return int(token_user_id)
+
+    @staticmethod
+    def _append_account_transaction(
+        db: Session,
+        user_id: int,
+        transaction_type: str,
+        amount_usdt: float,
+        symbol: Optional[str] = None,
+        quantity: Optional[float] = None,
+        description: Optional[str] = None,
+        reference_trade_id: Optional[int] = None,
+    ) -> None:
+        tx = db_models.AccountTransaction(
+            user_id=user_id,
+            transaction_type=transaction_type,
+            symbol=symbol,
+            amount_usdt=amount_usdt,
+            quantity=quantity,
+            description=description,
+            reference_trade_id=reference_trade_id,
+        )
+        db.add(tx)
+
+    @staticmethod
+    def _get_or_create_account(db: Session, user_id: int) -> db_models.UserAccount:
+        user = db.query(db_models.User).filter(db_models.User.id_user == user_id).first()
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+
+        account = db.query(db_models.UserAccount).filter(db_models.UserAccount.user_id == user_id).first()
+        if account is None:
+            account = db_models.UserAccount(user_id=user_id)
+            db.add(account)
+            db.flush()
+        return account
+
+    @staticmethod
+    def _get_or_create_holding(db: Session, user_id: int, symbol: str) -> db_models.UserHolding:
+        holding = (
+            db.query(db_models.UserHolding)
+            .filter(db_models.UserHolding.user_id == user_id)
+            .filter(db_models.UserHolding.symbol == symbol)
+            .first()
+        )
+        if holding is None:
+            holding = db_models.UserHolding(user_id=user_id, symbol=symbol, quantity=0, avg_cost_usdt=0, current_value_usdt=0)
+            db.add(holding)
+            db.flush()
+        return holding
+
+    def _sync_holding_value(self, db: Session, holding: db_models.UserHolding) -> db_models.UserHolding:
+        price = self._get_latest_price_usdt(db, holding.symbol) or holding.avg_cost_usdt or 0
+        holding.current_value_usdt = (holding.quantity or 0) * price
+        return holding
+
+    @staticmethod
+    def _get_latest_price_usdt(db: Session, symbol: str) -> Optional[float]:
+        row = (
+            db.query(db_models.CryptoPriceSnapshot)
+            .filter(db_models.CryptoPriceSnapshot.symbol == symbol)
+            .order_by(db_models.CryptoPriceSnapshot.created_at.desc())
+            .first()
+        )
+        if row is None:
+            return None
+        row_any = cast(Any, row)
+        return cast(Optional[float], row_any.price_usdt)
+
+    def _to_account_response(self, row: db_models.UserAccount) -> base_models.UserAccountResponse:
+        row_any = cast(Any, row)
+        return base_models.UserAccountResponse(
+            user_id=cast(int, row_any.user_id),
+            balance_usdt=cast(float, row_any.balance_usdt),
+            total_deposited_usdt=cast(float, row_any.total_deposited_usdt),
+            total_withdrawn_usdt=cast(float, row_any.total_withdrawn_usdt),
+            updated_at=cast(datetime, row_any.updated_at),
+        )
+
+    def _to_holding_response(self, row: db_models.UserHolding) -> base_models.UserHoldingResponse:
+        row_any = cast(Any, row)
+        current_price = 0.0
+        quantity = cast(float, row_any.quantity)
+        current_value = cast(float, row_any.current_value_usdt)
+        if quantity > 0:
+            current_price = current_value / quantity
+        return base_models.UserHoldingResponse(
+            symbol=cast(str, row_any.symbol),
+            quantity=quantity,
+            avg_cost_usdt=cast(float, row_any.avg_cost_usdt),
+            current_price_usdt=current_price,
+            current_value_usdt=current_value,
+            updated_at=cast(datetime, row_any.updated_at),
+        )
+
+    @staticmethod
     def _to_ticker_response(row: Optional[db_models.CryptoPriceSnapshot]) -> Optional[base_models.CryptoTickerResponse]:
         if row is None:
             return None
@@ -509,10 +753,15 @@ class CryptoCollectorService:
         )
 
     @staticmethod
-    def _to_trade_response(row: db_models.CryptoTradeHistory) -> base_models.CryptoTradeResponse:
+    def _to_trade_response(
+        row: db_models.CryptoTradeHistory,
+        account: Optional[db_models.UserAccount] = None,
+        holding: Optional[db_models.UserHolding] = None,
+    ) -> base_models.CryptoTradeResponse:
         row_any = cast(Any, row)
         return base_models.CryptoTradeResponse(
             id_trade=cast(int, row_any.id_trade),
+            user_id=cast(int, row_any.user_id),
             trade_type=cast(str, row_any.trade_type),
             symbol=cast(str, row_any.symbol),
             quantity=cast(float, row_any.quantity),
@@ -520,6 +769,10 @@ class CryptoCollectorService:
             total_usdt=cast(float, row_any.total_usdt),
             executed_at=cast(datetime, row_any.executed_at),
             created_at=cast(datetime, row_any.created_at),
+            balance_usdt=cast(Optional[float], getattr(account, "balance_usdt", None)),
+            holding_quantity=cast(Optional[float], getattr(holding, "quantity", None)),
+            holding_value_usdt=cast(Optional[float], getattr(holding, "current_value_usdt", None)),
+            avg_cost_usdt=cast(Optional[float], getattr(holding, "avg_cost_usdt", None)),
         )
 
 

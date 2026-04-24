@@ -58,7 +58,7 @@ async def create_buy_trade(
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
 ):
-    return crypto_collector_service.register_trade(db, "buy", payload)
+    return crypto_collector_service.register_trade(db, "buy", payload, token["id_user"])
 
 
 @router.post("/trades/sell", response_model=base_models.CryptoTradeResponse)
@@ -67,15 +67,16 @@ async def create_sell_trade(
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
 ):
-    return crypto_collector_service.register_trade(db, "sell", payload)
+    return crypto_collector_service.register_trade(db, "sell", payload, token["id_user"])
 
 
 @router.post("/trades/history", response_model=base_models.CryptoTradeHistoryResponse)
 async def trades_history(
     payload: base_models.CryptoTradeHistoryRequest,
+    token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
 ):
-    return crypto_collector_service.trade_history(db, payload.start_date, payload.end_date, payload.symbol, payload.trade_type)
+    return crypto_collector_service.trade_history(db, payload.start_date, payload.end_date, token["id_user"], payload.symbol, payload.trade_type)
 
 
 @router.websocket("/ws/prices")

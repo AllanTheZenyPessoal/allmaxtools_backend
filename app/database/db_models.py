@@ -51,6 +51,7 @@ class CryptoTradeHistory(Base):
     user_id = Column("IdUser", Integer, ForeignKey("User.IdUser"), nullable=False)
     trade_type = Column("TradeType", String(10), nullable=False)  # buy or sell
     symbol = Column("Symbol", String(10), nullable=False)  # BTC or ETH
+    trade_mode = Column("TradeMode", String(10), nullable=False, default="live")  # live or paper
     quantity = Column("Quantity", Float, nullable=False)
     unit_price_usdt = Column("UnitPriceUSDT", Float, nullable=False)
     total_usdt = Column("TotalUSDT", Float, nullable=False)
@@ -90,9 +91,38 @@ class AccountTransaction(Base):
     id_transaction = Column("IdTransaction", Integer, primary_key=True, autoincrement=True)
     user_id = Column("IdUser", Integer, ForeignKey("User.IdUser"), nullable=False)
     transaction_type = Column("TransactionType", String(20), nullable=False)
+    trade_mode = Column("TradeMode", String(10), nullable=False, default="live")  # live or paper
     symbol = Column("Symbol", String(10), nullable=True)
     amount_usdt = Column("AmountUSDT", Float, nullable=False)
     quantity = Column("Quantity", Float, nullable=True)
     description = Column("Description", String(255), nullable=True)
     reference_trade_id = Column("ReferenceTradeId", Integer, ForeignKey("crypto_trade_history.IdTrade"), nullable=True)
     created_at = Column("CreatedAt", DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PaperBalance(Base):
+    """Virtual account balance used exclusively for paper trading."""
+    __tablename__ = "paper_balance"
+
+    id_paper_balance = Column("IdPaperBalance", Integer, primary_key=True, autoincrement=True)
+    user_id = Column("IdUser", Integer, ForeignKey("User.IdUser"), nullable=False, unique=True)
+    balance_usdt = Column("BalanceUSDT", Float, nullable=False, default=0)
+    total_deposited_usdt = Column("TotalDepositedUSDT", Float, nullable=False, default=0)
+    total_withdrawn_usdt = Column("TotalWithdrawnUSDT", Float, nullable=False, default=0)
+    created_at = Column("CreatedAt", DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column("UpdatedAt", DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PaperHolding(Base):
+    """Simulated crypto positions used exclusively for paper trading."""
+    __tablename__ = "paper_holdings"
+    __table_args__ = (UniqueConstraint("IdUser", "Symbol", name="uq_paper_holdings_user_symbol"),)
+
+    id_paper_holding = Column("IdPaperHolding", Integer, primary_key=True, autoincrement=True)
+    user_id = Column("IdUser", Integer, ForeignKey("User.IdUser"), nullable=False)
+    symbol = Column("Symbol", String(10), nullable=False)
+    quantity = Column("Quantity", Float, nullable=False, default=0)
+    avg_cost_usdt = Column("AvgCostUSDT", Float, nullable=False, default=0)
+    current_value_usdt = Column("CurrentValueUSDT", Float, nullable=False, default=0)
+    created_at = Column("CreatedAt", DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column("UpdatedAt", DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

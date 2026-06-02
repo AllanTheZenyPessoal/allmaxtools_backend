@@ -18,6 +18,7 @@ def create_access_token(
     id_user: int,
     role: str = "user",
     company_id: Optional[int] = None,
+    trade_mode: str = "live",
     expires_delta: Optional[timedelta] = None
 ):
     to_encode = {
@@ -25,7 +26,8 @@ def create_access_token(
         "username": username,
         "id_user": id_user,
         "role": role,
-        "company_id": company_id
+        "company_id": company_id,
+        "trade_mode": trade_mode,
     }
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -44,6 +46,7 @@ def decode_access_token(token: str):
         id_user = payload.get("id_user")
         role = payload.get("role", "user")
         company_id = payload.get("company_id")
+        trade_mode = payload.get("trade_mode", "live")
         if email is None or username is None or id_user is None:
             raise HTTPException(status_code=401, detail="Invalid token")
         return {
@@ -51,7 +54,8 @@ def decode_access_token(token: str):
             "username": username,
             "id_user": id_user,
             "role": role,
-            "company_id": company_id
+            "company_id": company_id,
+            "trade_mode": trade_mode,
         }
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -75,6 +79,7 @@ def verify_token(token: str = Depends(oauth2_scheme)):
         "username": payload.get("username"),
         "id_user": payload.get("id_user"),
         "role": payload.get("role", "user"),
-        "company_id": payload.get("company_id")
+        "company_id": payload.get("company_id"),
+        "trade_mode": payload.get("trade_mode", "live"),
     }
 

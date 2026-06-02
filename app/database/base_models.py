@@ -16,6 +16,7 @@ class UserBase(BaseModel):
 class UserLoginRequest(BaseModel):
     email: EmailStr
     password: str
+    trade_mode: str = "live"  # bound mode for the issued token
 
 class UserRegisterRequest(BaseModel):
     username: str
@@ -84,6 +85,7 @@ class CryptoTradeResponse(BaseModel):
     user_id: int
     trade_type: str
     symbol: str
+    trade_mode: str
     quantity: float
     unit_price_usdt: float
     total_usdt: float
@@ -107,6 +109,7 @@ class CryptoTradeHistoryResponse(BaseModel):
     end_date: datetime
     symbol: Optional[str] = None
     trade_type: Optional[str] = None
+    trade_mode: Optional[str] = None
     items: List[CryptoTradeResponse]
 
 
@@ -118,6 +121,7 @@ class AccountMutationRequest(BaseModel):
 
 class UserAccountResponse(BaseModel):
     user_id: int
+    trade_mode: str
     balance_usdt: float
     total_deposited_usdt: float
     total_withdrawn_usdt: float
@@ -126,6 +130,7 @@ class UserAccountResponse(BaseModel):
 
 class UserHoldingResponse(BaseModel):
     symbol: str
+    trade_mode: str
     quantity: float
     avg_cost_usdt: float
     current_price_usdt: float
@@ -140,7 +145,9 @@ class UserHoldingsResponse(BaseModel):
 
 class PortfolioResponse(BaseModel):
     user_id: int
+    trade_mode: str = "live"
     balance_usdt: float
     total_holdings_value_usdt: float
     total_portfolio_value_usdt: float
+    holdings: List[UserHoldingResponse] = []
     holdings: List[UserHoldingResponse]

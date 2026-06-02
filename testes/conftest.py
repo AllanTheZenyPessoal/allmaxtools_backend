@@ -38,6 +38,17 @@ def override_get_db():
         db.close()
 
 
+@pytest.fixture(autouse=True)
+def reset_trade_guards():
+    """Reset all in-memory guard state between tests to avoid cross-test pollution."""
+    from services.trading.trade_guards import reset_for_testing as _reset_guards
+    from services.events import _handlers
+    _reset_guards()
+    _handlers.clear()
+    yield
+    _reset_guards()
+
+
 @pytest.fixture(scope="function")
 def test_db():
     Base.metadata.create_all(bind=engine)

@@ -6,6 +6,11 @@
     "symbol aceita apenas BTC ou ETH.",
     "Endpoints de compra e venda exigem Bearer token no header Authorization."
   ],
+  "wallet_validation_rules": {
+    "buy": "O saldo em USD (balance_usdt) da conta do usuário deve ser maior ou igual ao valor total da ordem (quantity * unit_price_usdt). Caso contrário, retorna HTTP 400 com o saldo disponível e o necessário na mensagem de erro.",
+    "sell": "A quantidade da criptomoeda (holding quantity) do usuário deve ser maior ou igual à quantity solicitada. Caso contrário, retorna HTTP 400 com a quantidade disponível e a necessária na mensagem de erro.",
+    "atomicity": "A validação de saldo ocorre após aquisição de lock de linha no banco (SELECT ... FOR UPDATE), garantindo que ordens concorrentes do mesmo usuário não ultrapassem o saldo disponível."
+  },
   "endpoints": [
     {
       "name": "Historico de precos por intervalo",
@@ -56,6 +61,7 @@
         "unit_price_usdt": 68000.5,
         "executed_at": "2026-04-23T10:15:00"
       },
+      "balance_usdt_deducted": true,
       "success_response_example": {
         "id_trade": 1,
         "trade_type": "buy",
@@ -64,11 +70,14 @@
         "unit_price_usdt": 68000.5,
         "total_usdt": 1020.0075,
         "executed_at": "2026-04-23T10:15:00",
-        "created_at": "2026-04-23T10:15:02.553217"
+        "created_at": "2026-04-23T10:15:02.553217",
+        "balance_usdt": 8979.9925,
+        "holding_quantity": 0.015
       },
-      "error_response_example": {
-        "detail": "symbol must be BTC or ETH"
-      }
+      "error_response_examples": [
+        {"detail": "symbol must be BTC or ETH"},
+        {"detail": "saldo insuficiente para esta compra: disponivel $100.00 USD, necessario $1020.01 USD"}
+      ]
     },
     {
       "name": "Cadastrar venda de criptomoeda",
@@ -93,11 +102,14 @@
         "unit_price_usdt": 3450.0,
         "total_usdt": 1207.5,
         "executed_at": "2026-04-23T11:00:00",
-        "created_at": "2026-04-23T11:00:03.013221"
+        "created_at": "2026-04-23T11:00:03.013221",
+        "balance_usdt": 1207.5,
+        "holding_quantity": 0.0
       },
-      "error_response_example": {
-        "detail": "quantity must be greater than 0"
-      }
+      "error_response_examples": [
+        {"detail": "quantity must be greater than 0"},
+        {"detail": "saldo insuficiente de ETH para esta venda: disponivel 0.10000000, necessario 0.35000000"}
+      ]
     },
     {
       "name": "Historico de compras e vendas por intervalo",

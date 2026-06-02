@@ -94,7 +94,15 @@
             "buy"
           ]
         }
-      }
+      },
+      "response": [
+        {
+          "name": "400 - Saldo USD insuficiente",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\"detail\": \"saldo insuficiente para esta compra: disponivel $50.00 USD, necessario $1020.01 USD\"}"
+        }
+      ]
     },
     {
       "name": "Crypto - Register Sell",
@@ -130,7 +138,15 @@
             "sell"
           ]
         }
-      }
+      },
+      "response": [
+        {
+          "name": "400 - Saldo de cripto insuficiente",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\"detail\": \"saldo insuficiente de ETH para esta venda: disponivel 0.10000000, necessario 0.35000000\"}"
+        }
+      ]
     },
     {
       "name": "Crypto - Trades History by Date Range",

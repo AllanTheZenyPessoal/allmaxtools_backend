@@ -9,6 +9,7 @@ from dependencies import db_dependency
 class LoginRequest(BaseModel):
     username: str
     password: str
+    mode: str = "live"  # trade_mode bound to the issued token
 
 router = APIRouter(
     # prefix="/address",
@@ -23,7 +24,7 @@ async def login_for_access_token(
     db: db_dependency,
     form_data: OAuth2PasswordRequestForm = Depends()
 ):
-    return await _authenticate_user(response, db, form_data.username, form_data.password)
+    return await _authenticate_user(response, db, form_data.username, form_data.password, mode="live")
 
 
 @router.post("/token_generate_json/", response_model=dict)
@@ -32,10 +33,10 @@ async def login_for_access_token_json(
     db: db_dependency,
     login_data: LoginRequest
 ):
-    return await _authenticate_user(response, db, login_data.username, login_data.password)
+    return await _authenticate_user(response, db, login_data.username, login_data.password, mode=login_data.mode)
 
 
-async def _authenticate_user(response: Response, db, username: str, password: str):
+async def _authenticate_user(response: Response, db, username: str, password: str, mode: str = "live"):
     # Check user credentials
     try:
         
@@ -74,6 +75,7 @@ async def _authenticate_user(response: Response, db, username: str, password: st
             id_user=db_user.id_user,
             role=db_user.role,
             company_id=db_user.company_id,
+            trade_mode=mode,
             expires_delta=access_token_expires
         )
         

@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Union, cast
 import json
 
 import httpx
@@ -10,6 +10,13 @@ import websockets
 
 from database import db_models, base_models
 from database.database import get_session_local
+from services.events import BalanceUpdatedEvent, TradeExecutedEvent, publish
+from services.trading.trade_guards import (
+    assert_exchange_healthy,
+    check_rate_limit,
+    validate_price_against_market,
+    validate_symbol_limits,
+)
 
 
 class WebSocketConnectionManager:
@@ -31,11 +38,15 @@ class WebSocketConnectionManager:
         async with self._lock:
             connections = list(self._connections)
 
+        dead: List[WebSocket] = []
         for connection in connections:
             try:
-                await connection.send_json(payload)
+                await asyncio.wait_for(connection.send_json(payload), timeout=5.0)
             except Exception:
-                await self.disconnect(connection)
+                dead.append(connection)
+
+        for connection in dead:
+            await self.disconnect(connection)
 
 
 class BinanceMarketClient:
@@ -125,10 +136,12 @@ class CryptoCollectorService:
         self._websocket_manager = websocket_manager
         self._market_client = BinanceMarketClient()
         self._pairs = ["BTCUSDT", "ETHUSDT"]
-        self._interval_seconds = 2
+        self._interval_seconds = 1
         self._is_running = False
         self._task: Optional[asyncio.Task] = None
         self._state_lock = asyncio.Lock()
+        # Shared buffer: último preço conhecido por símbolo, atualizado pelo receiver
+        self._price_cache: Dict[str, Dict] = {}
 
     async def play(self, db: Session, interval_seconds: int) -> Dict:
         if interval_seconds < 1:
@@ -276,6 +289,7 @@ class CryptoCollectorService:
         trade_type: str,
         payload: base_models.CryptoTradeCreateRequest,
         user_id: int,
+        trade_mode: str = "live",
     ) -> base_models.CryptoTradeResponse:
         normalized_type = trade_type.lower()
         if normalized_type not in ["buy", "sell"]:
@@ -291,64 +305,182 @@ class CryptoCollectorService:
         if payload.unit_price_usdt <= 0:
             raise HTTPException(status_code=400, detail="unit_price_usdt must be greater than 0")
 
+        # Symbol quantity limits (apply to both modes)
+        validate_symbol_limits(normalized_symbol, payload.quantity)
+
+        # Live-only operational guards
+        if trade_mode == "live":
+            assert_exchange_healthy()
+            check_rate_limit(user_id, normalized_symbol)
+            validate_price_against_market(db, normalized_symbol, payload.unit_price_usdt)
+
         executed_at = payload.executed_at or datetime.utcnow()
         total_usdt = payload.quantity * payload.unit_price_usdt
 
-        account = self._get_or_create_account(db, user_id)
-        holding = self._get_or_create_holding(db, user_id, normalized_symbol)
+        try:
+            # Verify user exists before acquiring any locks
+            if db.query(db_models.User).filter(db_models.User.id_user == user_id).first() is None:
+                raise HTTPException(status_code=404, detail="user not found")
 
-        if normalized_type == "buy":
-            if account.balance_usdt < total_usdt:
-                raise HTTPException(status_code=400, detail="insufficient saldo for this buy order")
+            if trade_mode == "live":
+                # Acquire row-level locks on account and holding before reading balances.
+                # Prevents two concurrent orders from reading the same balance and both passing.
+                account = (
+                    db.query(db_models.UserAccount)
+                    .filter(db_models.UserAccount.user_id == user_id)
+                    .with_for_update()
+                    .first()
+                )
+                if account is None:
+                    account = db_models.UserAccount(user_id=user_id)
+                    db.add(account)
+                    db.flush()
 
-            previous_qty = holding.quantity or 0
-            new_qty = previous_qty + payload.quantity
-            total_cost_basis = (holding.avg_cost_usdt or 0) * previous_qty + total_usdt
+                holding = (
+                    db.query(db_models.UserHolding)
+                    .filter(db_models.UserHolding.user_id == user_id)
+                    .filter(db_models.UserHolding.symbol == normalized_symbol)
+                    .with_for_update()
+                    .first()
+                )
+                if holding is None:
+                    holding = db_models.UserHolding(
+                        user_id=user_id,
+                        symbol=normalized_symbol,
+                        quantity=0,
+                        avg_cost_usdt=0,
+                        current_value_usdt=0,
+                    )
+                    db.add(holding)
+                    db.flush()
+            else:
+                # Paper mode: no row-level locks needed
+                account = (
+                    db.query(db_models.PaperBalance)
+                    .filter(db_models.PaperBalance.user_id == user_id)
+                    .first()
+                )
+                if account is None:
+                    account = db_models.PaperBalance(user_id=user_id)
+                    db.add(account)
+                    db.flush()
 
-            holding.quantity = new_qty
-            holding.avg_cost_usdt = total_cost_basis / new_qty if new_qty > 0 else 0
-            holding.current_value_usdt = new_qty * payload.unit_price_usdt
-            account.balance_usdt -= total_usdt
-        else:
-            available_qty = holding.quantity or 0
-            if available_qty < payload.quantity:
-                raise HTTPException(status_code=400, detail="insufficient coin saldo for this sell order")
+                holding = (
+                    db.query(db_models.PaperHolding)
+                    .filter(db_models.PaperHolding.user_id == user_id)
+                    .filter(db_models.PaperHolding.symbol == normalized_symbol)
+                    .first()
+                )
+                if holding is None:
+                    holding = db_models.PaperHolding(
+                        user_id=user_id,
+                        symbol=normalized_symbol,
+                        quantity=0,
+                        avg_cost_usdt=0,
+                        current_value_usdt=0,
+                    )
+                    db.add(holding)
+                    db.flush()
 
-            new_qty = available_qty - payload.quantity
-            holding.quantity = new_qty
-            holding.avg_cost_usdt = holding.avg_cost_usdt if new_qty > 0 else 0
-            holding.current_value_usdt = new_qty * payload.unit_price_usdt
-            account.balance_usdt += total_usdt
+            # Validate wallet balances immediately after acquiring locks
+            if normalized_type == "buy":
+                if account.balance_usdt < total_usdt:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"saldo insuficiente para esta compra: "
+                            f"disponivel ${account.balance_usdt:.2f} USD, "
+                            f"necessario ${total_usdt:.2f} USD"
+                        ),
+                    )
 
-        trade = db_models.CryptoTradeHistory(
+                previous_qty = holding.quantity or 0
+                new_qty = previous_qty + payload.quantity
+                total_cost_basis = (holding.avg_cost_usdt or 0) * previous_qty + total_usdt
+
+                holding.quantity = new_qty
+                holding.avg_cost_usdt = total_cost_basis / new_qty if new_qty > 0 else 0
+                holding.current_value_usdt = new_qty * payload.unit_price_usdt
+                prev_balance = float(account.balance_usdt)
+                account.balance_usdt -= total_usdt
+            else:
+                available_qty = holding.quantity or 0
+                if available_qty < payload.quantity:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"saldo insuficiente de {normalized_symbol} para esta venda: "
+                            f"disponivel {available_qty:.8f}, "
+                            f"necessario {payload.quantity:.8f}"
+                        ),
+                    )
+
+                new_qty = available_qty - payload.quantity
+                holding.quantity = new_qty
+                holding.avg_cost_usdt = holding.avg_cost_usdt if new_qty > 0 else 0
+                holding.current_value_usdt = new_qty * payload.unit_price_usdt
+                prev_balance = float(account.balance_usdt)
+                account.balance_usdt += total_usdt
+
+            trade = db_models.CryptoTradeHistory(
+                user_id=user_id,
+                trade_type=normalized_type,
+                symbol=normalized_symbol,
+                trade_mode=trade_mode,
+                quantity=payload.quantity,
+                unit_price_usdt=payload.unit_price_usdt,
+                total_usdt=total_usdt,
+                executed_at=executed_at,
+            )
+            db.add(trade)
+            db.flush()
+
+            self._append_account_transaction(
+                db,
+                user_id=user_id,
+                transaction_type=normalized_type,
+                amount_usdt=total_usdt,
+                symbol=normalized_symbol,
+                quantity=payload.quantity,
+                description=f"{normalized_type.upper()} {normalized_symbol}",
+                reference_trade_id=trade.id_trade,
+                trade_mode=trade_mode,
+            )
+
+            db.commit()
+            db.refresh(trade)
+            db.refresh(account)
+            db.refresh(holding)
+
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(status_code=500, detail="erro interno ao processar a ordem") from exc
+
+        change = -total_usdt if normalized_type == "buy" else total_usdt
+        publish(TradeExecutedEvent(
+            trade_id=int(cast(Any, trade).id_trade),
             user_id=user_id,
             trade_type=normalized_type,
             symbol=normalized_symbol,
+            trade_mode=trade_mode,
             quantity=payload.quantity,
             unit_price_usdt=payload.unit_price_usdt,
             total_usdt=total_usdt,
-            executed_at=executed_at,
-        )
-        db.add(trade)
-        db.flush()
-
-        self._append_account_transaction(
-            db,
+            executed_at=cast(datetime, cast(Any, trade).executed_at),
+        ))
+        publish(BalanceUpdatedEvent(
             user_id=user_id,
-            transaction_type=normalized_type,
-            amount_usdt=total_usdt,
-            symbol=normalized_symbol,
-            quantity=payload.quantity,
-            description=f"{normalized_type.upper()} {normalized_symbol}",
-            reference_trade_id=trade.id_trade,
-        )
+            trade_mode=trade_mode,
+            balance_usdt=float(cast(Any, account).balance_usdt),
+            previous_balance_usdt=prev_balance,
+            change_usdt=change,
+            reason=f"{normalized_type.upper()} {normalized_symbol}",
+        ))
 
-        db.commit()
-        db.refresh(trade)
-        db.refresh(account)
-        db.refresh(holding)
-
-        return self._to_trade_response(trade, account, holding)
+        return self._to_trade_response(trade, account, holding, trade_mode)
 
     def trade_history(
         self,
@@ -358,6 +490,7 @@ class CryptoCollectorService:
         user_id: int,
         symbol: Optional[str] = None,
         trade_type: Optional[str] = None,
+        trade_mode: Optional[str] = None,
     ) -> base_models.CryptoTradeHistoryResponse:
         if end_date < start_date:
             raise HTTPException(status_code=400, detail="end_date must be greater than or equal to start_date")
@@ -383,6 +516,13 @@ class CryptoCollectorService:
                 raise HTTPException(status_code=400, detail="trade_type must be buy or sell")
             query = query.filter(db_models.CryptoTradeHistory.trade_type == normalized_trade_type)
 
+        normalized_mode = None
+        if trade_mode:
+            normalized_mode = trade_mode.lower()
+            if normalized_mode not in ["live", "paper"]:
+                raise HTTPException(status_code=400, detail="trade_mode must be live or paper")
+            query = query.filter(db_models.CryptoTradeHistory.trade_mode == normalized_mode)
+
         rows = query.order_by(db_models.CryptoTradeHistory.executed_at.asc()).all()
         items = [self._to_trade_response(row) for row in rows]
 
@@ -391,26 +531,28 @@ class CryptoCollectorService:
             end_date=end_date,
             symbol=normalized_symbol,
             trade_type=normalized_trade_type,
+            trade_mode=normalized_mode,
             items=items,
         )
 
-    def get_account_balance(self, db: Session, user_id: int) -> base_models.UserAccountResponse:
-        account = self._get_or_create_account(db, user_id)
+    def get_account_balance(self, db: Session, user_id: int, trade_mode: str = "live") -> base_models.UserAccountResponse:
+        account = self._get_or_create_account(db, user_id, trade_mode)
         db.commit()
         db.refresh(account)
-        return self._to_account_response(account)
+        return self._to_account_response(account, trade_mode)
 
     def deposit_balance(
         self,
         db: Session,
         acting_user: Dict[str, Any],
         payload: base_models.AccountMutationRequest,
+        trade_mode: str = "live",
     ) -> base_models.UserAccountResponse:
         user_id = self._resolve_target_user_id(acting_user, payload.user_id)
         if payload.amount_usdt <= 0:
             raise HTTPException(status_code=400, detail="amount_usdt must be greater than 0")
 
-        account = self._get_or_create_account(db, user_id)
+        account = self._get_or_create_account(db, user_id, trade_mode)
         account.balance_usdt += payload.amount_usdt
         account.total_deposited_usdt += payload.amount_usdt
 
@@ -420,23 +562,25 @@ class CryptoCollectorService:
             transaction_type="deposit",
             amount_usdt=payload.amount_usdt,
             description=payload.description or "Account deposit",
+            trade_mode=trade_mode,
         )
 
         db.commit()
         db.refresh(account)
-        return self._to_account_response(account)
+        return self._to_account_response(account, trade_mode)
 
     def withdraw_balance(
         self,
         db: Session,
         acting_user: Dict[str, Any],
         payload: base_models.AccountMutationRequest,
+        trade_mode: str = "live",
     ) -> base_models.UserAccountResponse:
         user_id = self._resolve_target_user_id(acting_user, payload.user_id)
         if payload.amount_usdt <= 0:
             raise HTTPException(status_code=400, detail="amount_usdt must be greater than 0")
 
-        account = self._get_or_create_account(db, user_id)
+        account = self._get_or_create_account(db, user_id, trade_mode)
         if account.balance_usdt < payload.amount_usdt:
             raise HTTPException(status_code=400, detail="insufficient saldo for withdrawal")
 
@@ -449,131 +593,200 @@ class CryptoCollectorService:
             transaction_type="withdraw",
             amount_usdt=payload.amount_usdt,
             description=payload.description or "Account withdrawal",
+            trade_mode=trade_mode,
         )
 
         db.commit()
         db.refresh(account)
-        return self._to_account_response(account)
+        return self._to_account_response(account, trade_mode)
 
-    def get_holdings(self, db: Session, user_id: int) -> base_models.UserHoldingsResponse:
-        account = self._get_or_create_account(db, user_id)
-        holdings = (
-            db.query(db_models.UserHolding)
-            .filter(db_models.UserHolding.user_id == user_id)
-            .order_by(db_models.UserHolding.symbol.asc())
-            .all()
-        )
+    def get_holdings(self, db: Session, user_id: int, trade_mode: str = "live") -> base_models.UserHoldingsResponse:
+        account = self._get_or_create_account(db, user_id, trade_mode)
+        if trade_mode == "paper":
+            holdings = (
+                db.query(db_models.PaperHolding)
+                .filter(db_models.PaperHolding.user_id == user_id)
+                .order_by(db_models.PaperHolding.symbol.asc())
+                .all()
+            )
+        else:
+            holdings = (
+                db.query(db_models.UserHolding)
+                .filter(db_models.UserHolding.user_id == user_id)
+                .order_by(db_models.UserHolding.symbol.asc())
+                .all()
+            )
 
         items = [self._sync_holding_value(db, holding) for holding in holdings if (holding.quantity or 0) > 0]
         db.commit()
         return base_models.UserHoldingsResponse(
-            user_id=account.user_id,
-            holdings=[self._to_holding_response(item) for item in items],
+            user_id=int(cast(Any, account).user_id),
+            holdings=[self._to_holding_response(item, trade_mode) for item in items],
         )
 
-    def get_portfolio(self, db: Session, user_id: int) -> base_models.PortfolioResponse:
-        account = self._get_or_create_account(db, user_id)
-        holdings = (
-            db.query(db_models.UserHolding)
-            .filter(db_models.UserHolding.user_id == user_id)
-            .order_by(db_models.UserHolding.symbol.asc())
-            .all()
-        )
+    def get_portfolio(self, db: Session, user_id: int, trade_mode: str = "live") -> base_models.PortfolioResponse:
+        account = self._get_or_create_account(db, user_id, trade_mode)
+        if trade_mode == "paper":
+            holdings = (
+                db.query(db_models.PaperHolding)
+                .filter(db_models.PaperHolding.user_id == user_id)
+                .order_by(db_models.PaperHolding.symbol.asc())
+                .all()
+            )
+        else:
+            holdings = (
+                db.query(db_models.UserHolding)
+                .filter(db_models.UserHolding.user_id == user_id)
+                .order_by(db_models.UserHolding.symbol.asc())
+                .all()
+            )
 
         synced_holdings = [self._sync_holding_value(db, holding) for holding in holdings if (holding.quantity or 0) > 0]
         total_holdings_value = sum((holding.current_value_usdt or 0) for holding in synced_holdings)
         db.commit()
 
+        acct = cast(Any, account)
         return base_models.PortfolioResponse(
-            user_id=account.user_id,
-            balance_usdt=account.balance_usdt,
+            user_id=int(acct.user_id),
+            trade_mode=trade_mode,
+            balance_usdt=float(acct.balance_usdt),
             total_holdings_value_usdt=total_holdings_value,
-            total_portfolio_value_usdt=account.balance_usdt + total_holdings_value,
-            holdings=[self._to_holding_response(item) for item in synced_holdings],
+            total_portfolio_value_usdt=float(acct.balance_usdt) + total_holdings_value,
+            holdings=[self._to_holding_response(item, trade_mode) for item in synced_holdings],
         )
 
     async def _run_loop(self) -> None:
         SessionLocal = get_session_local()
+        reconnect_delay = 1.0
         print("[Collector] Loop started", flush=True)
+
         while self._is_running:
             try:
-                print("[Collector] Connecting to Kraken stream...", flush=True)
+                print(f"[Collector] Connecting to Kraken WebSocket... (retry delay={reconnect_delay}s)", flush=True)
                 kraken_symbols = [p.replace("USDT", "/USD") for p in self._pairs]
                 async with websockets.connect(
                     self._market_client.KRAKEN_WS_URL,
                     ping_interval=20,
                     ping_timeout=20,
+                    close_timeout=5,
                 ) as ws:
                     await ws.send(json.dumps({
                         "method": "subscribe",
                         "params": {"channel": "ticker", "symbol": kraken_symbols},
                     }))
                     print("[Collector] Connected and subscribed to Kraken stream", flush=True)
-                    while self._is_running:
-                        try:
-                            raw_message = await asyncio.wait_for(ws.recv(), timeout=60)
-                        except asyncio.TimeoutError:
-                            print("[Collector] recv() timeout — reconnecting", flush=True)
-                            break
+                    reconnect_delay = 1.0  # reset backoff após conexão bem-sucedida
 
-                        tickers = self._market_client.parse_trade_message(cast(str, raw_message))
-
-                        if not tickers:
-                            continue
-
-                        for ticker in tickers:
-                            if ticker["symbol"] not in ["BTC", "ETH"]:
-                                continue
-
-                            db = SessionLocal()
+                    receiver = asyncio.create_task(self._kraken_receiver(ws))
+                    tick = asyncio.create_task(self._tick_loop(SessionLocal))
+                    try:
+                        done, pending = await asyncio.wait(
+                            {receiver, tick},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for t in pending:
+                            t.cancel()
                             try:
-                                snapshot = db_models.CryptoPriceSnapshot(
-                                    symbol=ticker["symbol"],
-                                    pair=ticker["pair"],
-                                    price_usdt=ticker["price_usdt"],
-                                    price_change_percent_24h=ticker["price_change_percent_24h"],
-                                    high_24h=ticker["high_24h"],
-                                    low_24h=ticker["low_24h"],
-                                    volume_quote_24h=ticker["volume_quote_24h"],
-                                )
-                                db.add(snapshot)
+                                await t
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                        # Propaga exceção do receiver (erro de stream) para forçar reconexão
+                        for t in done:
+                            if not t.cancelled() and t.exception():
+                                raise t.exception()  # type: ignore[misc]
+                    except asyncio.CancelledError:
+                        receiver.cancel()
+                        tick.cancel()
+                        raise
 
-                                state = self._get_or_create_state(db)
-                                setattr(state, "updated_at", datetime.utcnow())
-                                db.commit()
-
-                                print(f"[Collector] Saved {ticker['symbol']} @ {ticker['price_usdt']}", flush=True)
-
-                                snapshot_created_at = cast(Any, snapshot).created_at
-
-                                payload = {
-                                    "type": "price_update",
-                                    "data": [
-                                        {
-                                            "symbol": snapshot.symbol,
-                                            "pair": snapshot.pair,
-                                            "price_usdt": snapshot.price_usdt,
-                                            "price_change_percent_24h": snapshot.price_change_percent_24h,
-                                            "high_24h": snapshot.high_24h,
-                                            "low_24h": snapshot.low_24h,
-                                            "volume_quote_24h": snapshot.volume_quote_24h,
-                                            "created_at": snapshot_created_at.isoformat() if snapshot_created_at else datetime.utcnow().isoformat(),
-                                        }
-                                    ],
-                                }
-                                await self._websocket_manager.broadcast(payload)
-                            except Exception as db_err:
-                                print(f"[Collector] DB error: {db_err}", flush=True)
-                                db.rollback()
-                            finally:
-                                db.close()
             except asyncio.CancelledError:
                 print("[Collector] Loop cancelled", flush=True)
                 raise
             except Exception as e:
-                print(f"[Collector] Kraken stream error: {type(e).__name__}: {e} — falling back to REST", flush=True)
-                await self._run_rest_polling_once(SessionLocal)
-                await asyncio.sleep(max(self._interval_seconds, 5))
+                print(
+                    f"[Collector] Stream error: {type(e).__name__}: {e} "
+                    f"— fallback REST, reconectando em {reconnect_delay}s",
+                    flush=True,
+                )
+                if self._is_running:
+                    await self._run_rest_polling_once(SessionLocal)
+                await asyncio.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_delay * 2, 30.0)  # backoff exponencial, máx 30s
+
+    async def _kraken_receiver(self, ws: Any) -> None:
+        """Lê mensagens do Kraken e mantém o último preço por símbolo em _price_cache."""
+        while self._is_running:
+            try:
+                raw = await asyncio.wait_for(ws.recv(), timeout=30)
+            except asyncio.TimeoutError:
+                print("[Collector] Kraken recv() timeout — reconectando", flush=True)
+                return  # sai para forçar reconexão no _run_loop
+
+            tickers = self._market_client.parse_trade_message(cast(str, raw))
+            if tickers:
+                for ticker in tickers:
+                    if ticker["symbol"] in ["BTC", "ETH"]:
+                        self._price_cache[ticker["symbol"]] = ticker
+
+    async def _tick_loop(self, SessionLocal: Any) -> None:
+        """A cada interval_seconds, persiste o cache no DB e faz broadcast para clientes WS."""
+        while self._is_running:
+            tick_start = asyncio.get_event_loop().time()
+
+            if self._price_cache:
+                db = SessionLocal()
+                snapshots = []
+                try:
+                    for ticker in list(self._price_cache.values()):
+                        snapshot = db_models.CryptoPriceSnapshot(
+                            symbol=ticker["symbol"],
+                            pair=ticker["pair"],
+                            price_usdt=ticker["price_usdt"],
+                            price_change_percent_24h=ticker["price_change_percent_24h"],
+                            high_24h=ticker["high_24h"],
+                            low_24h=ticker["low_24h"],
+                            volume_quote_24h=ticker["volume_quote_24h"],
+                        )
+                        db.add(snapshot)
+                        snapshots.append(snapshot)
+
+                    state = self._get_or_create_state(db)
+                    setattr(state, "updated_at", datetime.utcnow())
+                    db.commit()
+
+                    for s in snapshots:
+                        print(
+                            f"[Collector] {s.symbol} @ {s.price_usdt} "
+                            f"(interval={self._interval_seconds}s)",
+                            flush=True,
+                        )
+
+                    payload = {
+                        "type": "price_update",
+                        "data": [
+                            {
+                                "symbol": s.symbol,
+                                "pair": s.pair,
+                                "price_usdt": s.price_usdt,
+                                "price_change_percent_24h": s.price_change_percent_24h,
+                                "high_24h": s.high_24h,
+                                "low_24h": s.low_24h,
+                                "volume_quote_24h": s.volume_quote_24h,
+                                "created_at": (cast(Any, s).created_at or datetime.utcnow()).isoformat(),
+                            }
+                            for s in snapshots
+                        ],
+                    }
+                    await self._websocket_manager.broadcast(payload)
+                except Exception as db_err:
+                    print(f"[Collector] Tick DB error: {db_err}", flush=True)
+                    db.rollback()
+                finally:
+                    db.close()
+
+            # Dorme o tempo restante do intervalo compensando o tempo de processamento
+            elapsed = asyncio.get_event_loop().time() - tick_start
+            await asyncio.sleep(max(0.0, self._interval_seconds - elapsed))
 
     async def _run_rest_polling_once(self, SessionLocal) -> None:
         print("[Collector] REST fallback polling...", flush=True)
@@ -651,10 +864,12 @@ class CryptoCollectorService:
         quantity: Optional[float] = None,
         description: Optional[str] = None,
         reference_trade_id: Optional[int] = None,
+        trade_mode: str = "live",
     ) -> None:
         tx = db_models.AccountTransaction(
             user_id=user_id,
             transaction_type=transaction_type,
+            trade_mode=trade_mode,
             symbol=symbol,
             amount_usdt=amount_usdt,
             quantity=quantity,
@@ -664,33 +879,72 @@ class CryptoCollectorService:
         db.add(tx)
 
     @staticmethod
-    def _get_or_create_account(db: Session, user_id: int) -> db_models.UserAccount:
+    def _get_or_create_account(
+        db: Session, user_id: int, trade_mode: str = "live"
+    ) -> Union[db_models.UserAccount, db_models.PaperBalance]:
         user = db.query(db_models.User).filter(db_models.User.id_user == user_id).first()
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
 
-        account = db.query(db_models.UserAccount).filter(db_models.UserAccount.user_id == user_id).first()
-        if account is None:
-            account = db_models.UserAccount(user_id=user_id)
-            db.add(account)
-            db.flush()
+        if trade_mode == "paper":
+            account = (
+                db.query(db_models.PaperBalance)
+                .filter(db_models.PaperBalance.user_id == user_id)
+                .first()
+            )
+            if account is None:
+                account = db_models.PaperBalance(user_id=user_id)
+                db.add(account)
+                db.flush()
+        else:
+            account = (
+                db.query(db_models.UserAccount)
+                .filter(db_models.UserAccount.user_id == user_id)
+                .first()
+            )
+            if account is None:
+                account = db_models.UserAccount(user_id=user_id)
+                db.add(account)
+                db.flush()
         return account
 
     @staticmethod
-    def _get_or_create_holding(db: Session, user_id: int, symbol: str) -> db_models.UserHolding:
-        holding = (
-            db.query(db_models.UserHolding)
-            .filter(db_models.UserHolding.user_id == user_id)
-            .filter(db_models.UserHolding.symbol == symbol)
-            .first()
-        )
-        if holding is None:
-            holding = db_models.UserHolding(user_id=user_id, symbol=symbol, quantity=0, avg_cost_usdt=0, current_value_usdt=0)
-            db.add(holding)
-            db.flush()
+    def _get_or_create_holding(
+        db: Session, user_id: int, symbol: str, trade_mode: str = "live"
+    ) -> Union[db_models.UserHolding, db_models.PaperHolding]:
+        if trade_mode == "paper":
+            holding = (
+                db.query(db_models.PaperHolding)
+                .filter(db_models.PaperHolding.user_id == user_id)
+                .filter(db_models.PaperHolding.symbol == symbol)
+                .first()
+            )
+            if holding is None:
+                holding = db_models.PaperHolding(
+                    user_id=user_id, symbol=symbol, quantity=0, avg_cost_usdt=0, current_value_usdt=0
+                )
+                db.add(holding)
+                db.flush()
+        else:
+            holding = (
+                db.query(db_models.UserHolding)
+                .filter(db_models.UserHolding.user_id == user_id)
+                .filter(db_models.UserHolding.symbol == symbol)
+                .first()
+            )
+            if holding is None:
+                holding = db_models.UserHolding(
+                    user_id=user_id, symbol=symbol, quantity=0, avg_cost_usdt=0, current_value_usdt=0
+                )
+                db.add(holding)
+                db.flush()
         return holding
 
-    def _sync_holding_value(self, db: Session, holding: db_models.UserHolding) -> db_models.UserHolding:
+    def _sync_holding_value(
+        self,
+        db: Session,
+        holding: Union[db_models.UserHolding, db_models.PaperHolding],
+    ) -> Union[db_models.UserHolding, db_models.PaperHolding]:
         price = self._get_latest_price_usdt(db, holding.symbol) or holding.avg_cost_usdt or 0
         holding.current_value_usdt = (holding.quantity or 0) * price
         return holding
@@ -708,17 +962,26 @@ class CryptoCollectorService:
         row_any = cast(Any, row)
         return cast(Optional[float], row_any.price_usdt)
 
-    def _to_account_response(self, row: db_models.UserAccount) -> base_models.UserAccountResponse:
+    def _to_account_response(
+        self,
+        row: Union[db_models.UserAccount, db_models.PaperBalance],
+        trade_mode: str = "live",
+    ) -> base_models.UserAccountResponse:
         row_any = cast(Any, row)
         return base_models.UserAccountResponse(
             user_id=cast(int, row_any.user_id),
+            trade_mode=trade_mode,
             balance_usdt=cast(float, row_any.balance_usdt),
             total_deposited_usdt=cast(float, row_any.total_deposited_usdt),
             total_withdrawn_usdt=cast(float, row_any.total_withdrawn_usdt),
             updated_at=cast(datetime, row_any.updated_at),
         )
 
-    def _to_holding_response(self, row: db_models.UserHolding) -> base_models.UserHoldingResponse:
+    def _to_holding_response(
+        self,
+        row: Union[db_models.UserHolding, db_models.PaperHolding],
+        trade_mode: str = "live",
+    ) -> base_models.UserHoldingResponse:
         row_any = cast(Any, row)
         current_price = 0.0
         quantity = cast(float, row_any.quantity)
@@ -727,6 +990,7 @@ class CryptoCollectorService:
             current_price = current_value / quantity
         return base_models.UserHoldingResponse(
             symbol=cast(str, row_any.symbol),
+            trade_mode=trade_mode,
             quantity=quantity,
             avg_cost_usdt=cast(float, row_any.avg_cost_usdt),
             current_price_usdt=current_price,
@@ -755,15 +1019,18 @@ class CryptoCollectorService:
     @staticmethod
     def _to_trade_response(
         row: db_models.CryptoTradeHistory,
-        account: Optional[db_models.UserAccount] = None,
-        holding: Optional[db_models.UserHolding] = None,
+        account: Optional[Union[db_models.UserAccount, db_models.PaperBalance]] = None,
+        holding: Optional[Union[db_models.UserHolding, db_models.PaperHolding]] = None,
+        trade_mode: Optional[str] = None,
     ) -> base_models.CryptoTradeResponse:
         row_any = cast(Any, row)
+        effective_mode = trade_mode or cast(str, getattr(row_any, "trade_mode", "live")) or "live"
         return base_models.CryptoTradeResponse(
             id_trade=cast(int, row_any.id_trade),
             user_id=cast(int, row_any.user_id),
             trade_type=cast(str, row_any.trade_type),
             symbol=cast(str, row_any.symbol),
+            trade_mode=effective_mode,
             quantity=cast(float, row_any.quantity),
             unit_price_usdt=cast(float, row_any.unit_price_usdt),
             total_usdt=cast(float, row_any.total_usdt),

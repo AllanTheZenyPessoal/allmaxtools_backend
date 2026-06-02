@@ -1,7 +1,7 @@
 from typing import Annotated, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from database import base_models
@@ -10,6 +10,16 @@ from endpoint.crypto import crypto_collector_service, websocket_manager
 from token_utils.apikey_generator import verify_token
 
 router = APIRouter(tags=["crypto"], prefix="/crypto")
+
+
+def _assert_mode_matches_token(token: dict, mode: str) -> None:
+    """Raise 403 when the token's trade_mode claim disagrees with the request mode."""
+    token_mode = token.get("trade_mode", "live")
+    if token_mode != mode:
+        raise HTTPException(
+            status_code=403,
+            detail=f"token is bound to '{token_mode}' mode; request uses '{mode}' mode",
+        )
 
 
 @router.post("/play")
@@ -57,8 +67,10 @@ async def create_buy_trade(
     payload: base_models.CryptoTradeCreateRequest,
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
+    mode: str = Query("live", pattern="^(paper|live)$"),
 ):
-    return crypto_collector_service.register_trade(db, "buy", payload, token["id_user"])
+    _assert_mode_matches_token(token, mode)
+    return crypto_collector_service.register_trade(db, "buy", payload, token["id_user"], mode)
 
 
 @router.post("/trades/sell", response_model=base_models.CryptoTradeResponse)
@@ -66,8 +78,10 @@ async def create_sell_trade(
     payload: base_models.CryptoTradeCreateRequest,
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
+    mode: str = Query("live", pattern="^(paper|live)$"),
 ):
-    return crypto_collector_service.register_trade(db, "sell", payload, token["id_user"])
+    _assert_mode_matches_token(token, mode)
+    return crypto_collector_service.register_trade(db, "sell", payload, token["id_user"], mode)
 
 
 @router.post("/trades/history", response_model=base_models.CryptoTradeHistoryResponse)
@@ -75,8 +89,18 @@ async def trades_history(
     payload: base_models.CryptoTradeHistoryRequest,
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
+    mode: str = Query("live", pattern="^(paper|live)$"),
 ):
-    return crypto_collector_service.trade_history(db, payload.start_date, payload.end_date, token["id_user"], payload.symbol, payload.trade_type)
+    _assert_mode_matches_token(token, mode)
+    return crypto_collector_service.trade_history(
+        db,
+        payload.start_date,
+        payload.end_date,
+        token["id_user"],
+        payload.symbol,
+        payload.trade_type,
+        mode,
+    )
 
 
 @router.websocket("/ws/prices")

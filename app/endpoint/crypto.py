@@ -299,14 +299,15 @@ class CryptoCollectorService:
         if normalized_symbol not in ["BTC", "ETH"]:
             raise HTTPException(status_code=400, detail="symbol must be BTC or ETH")
 
-        if payload.quantity <= 0:
-            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
-
         if payload.unit_price_usdt <= 0:
             raise HTTPException(status_code=400, detail="unit_price_usdt must be greater than 0")
 
+        quantity = payload.quantity if payload.quantity is not None else 1.0
+        if quantity <= 0:
+            raise HTTPException(status_code=400, detail="quantity must be greater than 0")
+
         # Symbol quantity limits (apply to both modes)
-        validate_symbol_limits(normalized_symbol, payload.quantity)
+        validate_symbol_limits(normalized_symbol, quantity)
 
         # Live-only operational guards
         if trade_mode == "live":
@@ -315,7 +316,7 @@ class CryptoCollectorService:
             validate_price_against_market(db, normalized_symbol, payload.unit_price_usdt)
 
         executed_at = payload.executed_at or datetime.utcnow()
-        total_usdt = payload.quantity * payload.unit_price_usdt
+        total_usdt = quantity * payload.unit_price_usdt
 
         try:
             # Verify user exists before acquiring any locks
@@ -395,7 +396,7 @@ class CryptoCollectorService:
                     )
 
                 previous_qty = holding.quantity or 0
-                new_qty = previous_qty + payload.quantity
+                new_qty = previous_qty + quantity
                 total_cost_basis = (holding.avg_cost_usdt or 0) * previous_qty + total_usdt
 
                 holding.quantity = new_qty
@@ -405,17 +406,17 @@ class CryptoCollectorService:
                 account.balance_usdt -= total_usdt
             else:
                 available_qty = holding.quantity or 0
-                if available_qty < payload.quantity:
+                if available_qty < quantity:
                     raise HTTPException(
                         status_code=400,
                         detail=(
                             f"saldo insuficiente de {normalized_symbol} para esta venda: "
                             f"disponivel {available_qty:.8f}, "
-                            f"necessario {payload.quantity:.8f}"
+                            f"necessario {quantity:.8f}"
                         ),
                     )
 
-                new_qty = available_qty - payload.quantity
+                new_qty = available_qty - quantity
                 holding.quantity = new_qty
                 holding.avg_cost_usdt = holding.avg_cost_usdt if new_qty > 0 else 0
                 holding.current_value_usdt = new_qty * payload.unit_price_usdt
@@ -427,7 +428,7 @@ class CryptoCollectorService:
                 trade_type=normalized_type,
                 symbol=normalized_symbol,
                 trade_mode=trade_mode,
-                quantity=payload.quantity,
+                quantity=quantity,
                 unit_price_usdt=payload.unit_price_usdt,
                 total_usdt=total_usdt,
                 executed_at=executed_at,
@@ -441,7 +442,7 @@ class CryptoCollectorService:
                 transaction_type=normalized_type,
                 amount_usdt=total_usdt,
                 symbol=normalized_symbol,
-                quantity=payload.quantity,
+                quantity=quantity,
                 description=f"{normalized_type.upper()} {normalized_symbol}",
                 reference_trade_id=trade.id_trade,
                 trade_mode=trade_mode,
@@ -466,7 +467,7 @@ class CryptoCollectorService:
             trade_type=normalized_type,
             symbol=normalized_symbol,
             trade_mode=trade_mode,
-            quantity=payload.quantity,
+            quantity=quantity,
             unit_price_usdt=payload.unit_price_usdt,
             total_usdt=total_usdt,
             executed_at=cast(datetime, cast(Any, trade).executed_at),

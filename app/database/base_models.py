@@ -75,8 +75,8 @@ class CryptoHistoryByDateResponse(BaseModel):
 
 class CryptoTradeCreateRequest(BaseModel):
     symbol: str
-    quantity: float
     unit_price_usdt: float
+    quantity: Optional[float] = None  # if omitted, defaults to 1 unit server-side
     executed_at: Optional[datetime] = None
 
 
@@ -150,4 +150,3 @@ class PortfolioResponse(BaseModel):
     total_holdings_value_usdt: float
     total_portfolio_value_usdt: float
     holdings: List[UserHoldingResponse] = []
-    holdings: List[UserHoldingResponse]

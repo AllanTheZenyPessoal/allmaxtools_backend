@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import db_models
-from database.database import init_db, get_engine
+from database.database import init_db, get_engine, get_session_local
 
 # Import active routes
 from routes import user, crypto, account
@@ -47,11 +47,23 @@ async def startup_event():
 
     print("[API] Iniciando conexão com banco de dados...")
     init_db()
-    
+
     # Cria tabelas DEPOIS da conexão estar estabelecida
     engine = get_engine()
     db_models.Base.metadata.create_all(bind=engine)
     print("[API] ✅ Tabelas criadas/verificadas com sucesso!")
+
+    # Auto-start price collector so history is always available
+    from endpoint.crypto import crypto_collector_service
+    SessionLocal = get_session_local()
+    db = SessionLocal()
+    try:
+        result = await crypto_collector_service.play(db, interval_seconds=2)
+        print(f"[API] ✅ Coletor de preços: {result.get('status')}")
+    except Exception as e:
+        print(f"[API] ⚠️  Coletor de preços não iniciado: {e}")
+    finally:
+        db.close()
 
 
 # Include all routers

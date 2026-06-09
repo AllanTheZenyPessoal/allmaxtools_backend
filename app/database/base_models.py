@@ -41,6 +41,10 @@ class CryptoCollectorStatusResponse(BaseModel):
     started_at: Optional[datetime] = None
     stopped_at: Optional[datetime] = None
 
+class CryptoPriceItem(BaseModel):
+    price_usdt: float
+    created_at: datetime
+
 class CryptoTickerResponse(BaseModel):
     symbol: str
     pair: str
@@ -52,8 +56,8 @@ class CryptoTickerResponse(BaseModel):
     created_at: datetime
 
 class CryptoLatestResponse(BaseModel):
-    btc: Optional[CryptoTickerResponse] = None
-    eth: Optional[CryptoTickerResponse] = None
+    btc: Optional[CryptoPriceItem] = None
+    eth: Optional[CryptoPriceItem] = None
 
 class CryptoHistoryResponse(BaseModel):
     symbol: str
@@ -67,16 +71,13 @@ class CryptoPriceHistoryRangeRequest(BaseModel):
 
 
 class CryptoHistoryByDateResponse(BaseModel):
-    symbol: str
-    start_date: datetime
-    end_date: datetime
-    items: List[CryptoTickerResponse]
+    items: List[CryptoPriceItem]
 
 
 class CryptoTradeCreateRequest(BaseModel):
     symbol: str
     unit_price_usdt: float
-    quantity: Optional[float] = None  # if omitted, defaults to 1 unit server-side
+    quantity: Optional[float] = None
     executed_at: Optional[datetime] = None
 
 
@@ -104,13 +105,16 @@ class CryptoTradeHistoryRequest(BaseModel):
     trade_type: Optional[str] = None
 
 
+class CryptoTradeHistoryItem(BaseModel):
+    symbol: str
+    trade_type: str
+    unit_price_usdt: float
+    quantity: float
+    executed_at: datetime
+
+
 class CryptoTradeHistoryResponse(BaseModel):
-    start_date: datetime
-    end_date: datetime
-    symbol: Optional[str] = None
-    trade_type: Optional[str] = None
-    trade_mode: Optional[str] = None
-    items: List[CryptoTradeResponse]
+    items: List[CryptoTradeHistoryItem]
 
 
 class AccountMutationRequest(BaseModel):
@@ -120,12 +124,7 @@ class AccountMutationRequest(BaseModel):
 
 
 class UserAccountResponse(BaseModel):
-    user_id: int
-    trade_mode: str
     balance_usdt: float
-    total_deposited_usdt: float
-    total_withdrawn_usdt: float
-    updated_at: datetime
 
 
 class UserHoldingResponse(BaseModel):

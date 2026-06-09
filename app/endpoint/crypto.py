@@ -218,8 +218,8 @@ class CryptoCollectorService:
         )
 
         return base_models.CryptoLatestResponse(
-            btc=self._to_ticker_response(btc),
-            eth=self._to_ticker_response(eth),
+            btc=self._to_price_item(btc),
+            eth=self._to_price_item(eth),
         )
 
     def history(self, db: Session, symbol: str, limit: int) -> base_models.CryptoHistoryResponse:
@@ -270,18 +270,13 @@ class CryptoCollectorService:
             .all()
         )
 
-        items: List[base_models.CryptoTickerResponse] = []
+        items: List[base_models.CryptoPriceItem] = []
         for item in rows:
-            parsed = self._to_ticker_response(item)
+            parsed = self._to_price_item(item)
             if parsed is not None:
                 items.append(parsed)
 
-        return base_models.CryptoHistoryByDateResponse(
-            symbol=normalized,
-            start_date=start_date,
-            end_date=end_date,
-            items=items,
-        )
+        return base_models.CryptoHistoryByDateResponse(items=items)
 
     def register_trade(
         self,
@@ -525,16 +520,9 @@ class CryptoCollectorService:
             query = query.filter(db_models.CryptoTradeHistory.trade_mode == normalized_mode)
 
         rows = query.order_by(db_models.CryptoTradeHistory.executed_at.asc()).all()
-        items = [self._to_trade_response(row) for row in rows]
+        items = [self._to_trade_history_item(row) for row in rows]
 
-        return base_models.CryptoTradeHistoryResponse(
-            start_date=start_date,
-            end_date=end_date,
-            symbol=normalized_symbol,
-            trade_type=normalized_trade_type,
-            trade_mode=normalized_mode,
-            items=items,
-        )
+        return base_models.CryptoTradeHistoryResponse(items=items)
 
     def get_account_balance(self, db: Session, user_id: int, trade_mode: str = "live") -> base_models.UserAccountResponse:
         account = self._get_or_create_account(db, user_id, trade_mode)
@@ -970,12 +958,7 @@ class CryptoCollectorService:
     ) -> base_models.UserAccountResponse:
         row_any = cast(Any, row)
         return base_models.UserAccountResponse(
-            user_id=cast(int, row_any.user_id),
-            trade_mode=trade_mode,
             balance_usdt=cast(float, row_any.balance_usdt),
-            total_deposited_usdt=cast(float, row_any.total_deposited_usdt),
-            total_withdrawn_usdt=cast(float, row_any.total_withdrawn_usdt),
-            updated_at=cast(datetime, row_any.updated_at),
         )
 
     def _to_holding_response(
@@ -1015,6 +998,27 @@ class CryptoCollectorService:
             low_24h=cast(Optional[float], row_any.low_24h),
             volume_quote_24h=cast(Optional[float], row_any.volume_quote_24h),
             created_at=cast(datetime, row_any.created_at),
+        )
+
+    @staticmethod
+    def _to_price_item(row: Optional[db_models.CryptoPriceSnapshot]) -> Optional[base_models.CryptoPriceItem]:
+        if row is None:
+            return None
+        row_any = cast(Any, row)
+        return base_models.CryptoPriceItem(
+            price_usdt=cast(float, row_any.price_usdt),
+            created_at=cast(datetime, row_any.created_at),
+        )
+
+    @staticmethod
+    def _to_trade_history_item(row: db_models.CryptoTradeHistory) -> base_models.CryptoTradeHistoryItem:
+        row_any = cast(Any, row)
+        return base_models.CryptoTradeHistoryItem(
+            symbol=cast(str, row_any.symbol),
+            trade_type=cast(str, row_any.trade_type),
+            unit_price_usdt=cast(float, row_any.unit_price_usdt),
+            quantity=cast(float, row_any.quantity),
+            executed_at=cast(datetime, row_any.executed_at),
         )
 
     @staticmethod

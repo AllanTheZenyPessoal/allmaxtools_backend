@@ -258,6 +258,10 @@ class CryptoCollectorService:
         if normalized not in ["BTC", "ETH"]:
             raise HTTPException(status_code=400, detail="symbol must be BTC or ETH")
 
+        # Strip timezone info so comparisons work with naive MySQL/SQLite datetimes
+        start_date = start_date.replace(tzinfo=None)
+        end_date = end_date.replace(tzinfo=None)
+
         if end_date < start_date:
             raise HTTPException(status_code=400, detail="end_date must be greater than or equal to start_date")
 
@@ -310,7 +314,7 @@ class CryptoCollectorService:
             check_rate_limit(user_id, normalized_symbol)
             validate_price_against_market(db, normalized_symbol, payload.unit_price_usdt)
 
-        executed_at = payload.executed_at or datetime.utcnow()
+        executed_at = (payload.executed_at or datetime.utcnow()).replace(tzinfo=None)
         total_usdt = quantity * payload.unit_price_usdt
 
         try:
@@ -488,6 +492,10 @@ class CryptoCollectorService:
         trade_type: Optional[str] = None,
         trade_mode: Optional[str] = None,
     ) -> base_models.CryptoTradeHistoryResponse:
+        # Strip timezone info so comparisons work with naive MySQL/SQLite datetimes
+        start_date = start_date.replace(tzinfo=None)
+        end_date = end_date.replace(tzinfo=None)
+
         if end_date < start_date:
             raise HTTPException(status_code=400, detail="end_date must be greater than or equal to start_date")
 

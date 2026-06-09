@@ -1,3 +1,4 @@
+import traceback
 from typing import Annotated, Optional
 from datetime import datetime
 
@@ -92,15 +93,21 @@ async def trades_history(
     mode: str = Query("live", pattern="^(paper|live)$"),
 ):
     _assert_mode_matches_token(token, mode)
-    return crypto_collector_service.trade_history(
-        db,
-        payload.start_date,
-        payload.end_date,
-        token["id_user"],
-        payload.symbol,
-        payload.trade_type,
-        mode,
-    )
+    try:
+        return crypto_collector_service.trade_history(
+            db,
+            payload.start_date,
+            payload.end_date,
+            token["id_user"],
+            payload.symbol,
+            payload.trade_type,
+            mode,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.websocket("/ws/prices")

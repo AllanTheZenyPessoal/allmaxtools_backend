@@ -21,53 +21,78 @@ def _assert_mode_matches_token(token: dict, mode: str) -> None:
         )
 
 
-@router.get("/balance", response_model=base_models.UserAccountResponse)
+@router.get(
+    "/balance",
+    response_model=base_models.UserAccountResponse,
+    summary="Saldo da conta",
+    description="Retorna o saldo em USDT disponível na conta do usuário autenticado.",
+)
 async def get_balance(
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
-    mode: str = Query("live", pattern="^(paper|live)$"),
+    mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
     return crypto_collector_service.get_account_balance(db, token["id_user"], mode)
 
 
-@router.get("/holdings", response_model=base_models.UserHoldingsResponse)
+@router.get(
+    "/holdings",
+    response_model=base_models.UserHoldingsResponse,
+    summary="Holdings do usuário",
+    description="Retorna as posições abertas (criptomoedas em carteira) do usuário autenticado.",
+)
 async def get_holdings(
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
-    mode: str = Query("live", pattern="^(paper|live)$"),
+    mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
     return crypto_collector_service.get_holdings(db, token["id_user"], mode)
 
 
-@router.get("/portfolio", response_model=base_models.PortfolioResponse)
+@router.get(
+    "/portfolio",
+    response_model=base_models.PortfolioResponse,
+    summary="Portfólio completo",
+    description="Retorna saldo, holdings e valor total consolidado do portfólio do usuário.",
+)
 async def get_portfolio(
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
-    mode: str = Query("live", pattern="^(paper|live)$"),
+    mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
     return crypto_collector_service.get_portfolio(db, token["id_user"], mode)
 
 
-@router.post("/deposit", response_model=base_models.UserAccountResponse)
+@router.post(
+    "/deposit",
+    response_model=base_models.UserAccountResponse,
+    summary="Depositar saldo",
+    description="Credita um valor em USDT na conta do usuário. `user_id` é opcional — apenas admins podem depositar para outro usuário.",
+)
 async def deposit_balance(
     payload: base_models.AccountMutationRequest,
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
-    mode: str = Query("live", pattern="^(paper|live)$"),
+    mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
     return crypto_collector_service.deposit_balance(db, token, payload, mode)
 
 
-@router.post("/withdraw", response_model=base_models.UserAccountResponse)
+@router.post(
+    "/withdraw",
+    response_model=base_models.UserAccountResponse,
+    summary="Sacar saldo",
+    description="Debita um valor em USDT da conta do usuário. Retorna erro 400 se o saldo for insuficiente.",
+)
 async def withdraw_balance(
     payload: base_models.AccountMutationRequest,
     token: Annotated[dict, Depends(verify_token)],
     db: Session = Depends(get_db),
-    mode: str = Query("live", pattern="^(paper|live)$"),
+    mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
     return crypto_collector_service.withdraw_balance(db, token, payload, mode)

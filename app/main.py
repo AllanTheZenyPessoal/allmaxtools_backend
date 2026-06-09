@@ -10,9 +10,28 @@ from token_utils.token_route import router as token_router
 
 # Create FastAPI app
 app = FastAPI(
-    title="Prototype API",
+    title="AllmaxTools API",
     version="1.0.0",
-    root_path="/api"
+    description="API para gerenciamento de trades, preços e conta de usuário em criptomoedas.",
+    root_path="/api",
+    openapi_tags=[
+        {
+            "name": "crypto",
+            "description": "Preços de mercado, histórico e execução de ordens de compra/venda.",
+        },
+        {
+            "name": "account",
+            "description": "Saldo, holdings, portfólio, depósito e saque da conta do usuário.",
+        },
+        {
+            "name": "auth",
+            "description": "Geração e validação de tokens de acesso.",
+        },
+        {
+            "name": "user",
+            "description": "Gerenciamento de usuários.",
+        },
+    ],
 )
 
 # Set CORS

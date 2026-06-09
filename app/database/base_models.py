@@ -1,6 +1,6 @@
 from typing import Optional, List
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 class UserBase(BaseModel):
     username: Optional[str] = None
@@ -42,8 +42,8 @@ class CryptoCollectorStatusResponse(BaseModel):
     stopped_at: Optional[datetime] = None
 
 class CryptoPriceItem(BaseModel):
-    price_usdt: float
-    created_at: datetime
+    price_usdt: float = Field(..., example=105000.0)
+    created_at: datetime = Field(..., example="2026-06-09T12:00:00")
 
 class CryptoTickerResponse(BaseModel):
     symbol: str
@@ -59,26 +59,45 @@ class CryptoLatestResponse(BaseModel):
     btc: Optional[CryptoPriceItem] = None
     eth: Optional[CryptoPriceItem] = None
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "btc": {"price_usdt": 105000.0, "created_at": "2026-06-09T12:00:00"},
+                "eth": {"price_usdt": 2800.0,   "created_at": "2026-06-09T12:00:00"},
+            }
+        }
+    }
+
 class CryptoHistoryResponse(BaseModel):
     symbol: str
     items: List[CryptoTickerResponse]
 
 
 class CryptoPriceHistoryRangeRequest(BaseModel):
-    symbol: str
-    start_date: datetime
-    end_date: datetime
+    symbol: str = Field(..., example="BTC")
+    start_date: datetime = Field(..., example="2026-06-02T12:00:00")
+    end_date: datetime = Field(..., example="2026-06-09T12:00:00")
 
 
 class CryptoHistoryByDateResponse(BaseModel):
     items: List[CryptoPriceItem]
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "items": [
+                    {"price_usdt": 104500.0, "created_at": "2026-06-02T12:00:00"}
+                ]
+            }
+        }
+    }
+
 
 class CryptoTradeCreateRequest(BaseModel):
-    symbol: str
-    unit_price_usdt: float
-    quantity: Optional[float] = None
-    executed_at: Optional[datetime] = None
+    symbol: str = Field(..., example="BTC")
+    unit_price_usdt: float = Field(..., example=104500.0)
+    quantity: Optional[float] = Field(None, example=0.000957)
+    executed_at: Optional[datetime] = Field(None, example="2026-06-09T12:00:00.000Z")
 
 
 class CryptoTradeResponse(BaseModel):
@@ -99,32 +118,52 @@ class CryptoTradeResponse(BaseModel):
 
 
 class CryptoTradeHistoryRequest(BaseModel):
-    start_date: datetime
-    end_date: datetime
-    symbol: Optional[str] = None
-    trade_type: Optional[str] = None
+    start_date: datetime = Field(..., example="2026-05-10T00:00:00.000Z")
+    end_date: datetime = Field(..., example="2026-06-09T00:00:00.000Z")
+    symbol: Optional[str] = Field(None, example="BTC", description="Opcional. BTC ou ETH.")
+    trade_type: Optional[str] = Field(None, example="buy", description="Opcional. 'buy' ou 'sell'.")
 
 
 class CryptoTradeHistoryItem(BaseModel):
-    symbol: str
-    trade_type: str
-    unit_price_usdt: float
-    quantity: float
-    executed_at: datetime
+    symbol: str = Field(..., example="BTC")
+    trade_type: str = Field(..., example="buy")
+    unit_price_usdt: float = Field(..., example=104500.0)
+    quantity: float = Field(..., example=0.000957)
+    executed_at: datetime = Field(..., example="2026-06-09T12:00:00")
 
 
 class CryptoTradeHistoryResponse(BaseModel):
     items: List[CryptoTradeHistoryItem]
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "items": [
+                    {
+                        "symbol": "BTC",
+                        "trade_type": "buy",
+                        "unit_price_usdt": 104500.0,
+                        "quantity": 0.000957,
+                        "executed_at": "2026-06-09T12:00:00",
+                    }
+                ]
+            }
+        }
+    }
+
 
 class AccountMutationRequest(BaseModel):
-    amount_usdt: float
-    description: Optional[str] = None
-    user_id: Optional[int] = None
+    amount_usdt: float = Field(..., example=100.0)
+    description: Optional[str] = Field(None, example="Depósito inicial")
+    user_id: Optional[int] = Field(None, example=1, description="Opcional. Apenas admins podem informar outro user_id.")
 
 
 class UserAccountResponse(BaseModel):
-    balance_usdt: float
+    balance_usdt: float = Field(..., example=500.0)
+
+    model_config = {
+        "json_schema_extra": {"example": {"balance_usdt": 500.0}}
+    }
 
 
 class UserHoldingResponse(BaseModel):
@@ -141,6 +180,25 @@ class UserHoldingsResponse(BaseModel):
     user_id: int
     holdings: List[UserHoldingResponse]
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "user_id": 1,
+                "holdings": [
+                    {
+                        "symbol": "BTC",
+                        "trade_mode": "live",
+                        "quantity": 0.000957,
+                        "avg_cost_usdt": 104500.0,
+                        "current_price_usdt": 105000.0,
+                        "current_value_usdt": 100.49,
+                        "updated_at": "2026-06-09T12:00:00",
+                    }
+                ],
+            }
+        }
+    }
+
 
 class PortfolioResponse(BaseModel):
     user_id: int
@@ -149,3 +207,26 @@ class PortfolioResponse(BaseModel):
     total_holdings_value_usdt: float
     total_portfolio_value_usdt: float
     holdings: List[UserHoldingResponse] = []
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "user_id": 1,
+                "trade_mode": "live",
+                "balance_usdt": 500.0,
+                "total_holdings_value_usdt": 100.49,
+                "total_portfolio_value_usdt": 600.49,
+                "holdings": [
+                    {
+                        "symbol": "BTC",
+                        "trade_mode": "live",
+                        "quantity": 0.000957,
+                        "avg_cost_usdt": 104500.0,
+                        "current_price_usdt": 105000.0,
+                        "current_value_usdt": 100.49,
+                        "updated_at": "2026-06-09T12:00:00",
+                    }
+                ],
+            }
+        }
+    }

@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "003_binance"
-down_revision: Union[str, None] = "002_fix_salesorder_column_names"
+down_revision: Union[str, None] = "006_add_trade_mode_and_paper_tables"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

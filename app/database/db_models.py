@@ -57,6 +57,7 @@ class CryptoTradeHistory(Base):
     total_usdt = Column("TotalUSDT", Float, nullable=False)
     executed_at = Column("ExecutedAt", DateTime, nullable=False, default=datetime.utcnow)
     created_at = Column("CreatedAt", DateTime, nullable=False, default=datetime.utcnow)
+    binance_order_id = Column("BinanceOrderId", String(50), nullable=True)
 
 
 class UserAccount(Base):
@@ -109,6 +110,20 @@ class PaperBalance(Base):
     balance_usdt = Column("BalanceUSDT", Float, nullable=False, default=0)
     total_deposited_usdt = Column("TotalDepositedUSDT", Float, nullable=False, default=0)
     total_withdrawn_usdt = Column("TotalWithdrawnUSDT", Float, nullable=False, default=0)
+    created_at = Column("CreatedAt", DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column("UpdatedAt", DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BinanceCredentials(Base):
+    """Encrypted Binance API credentials stored per user."""
+    __tablename__ = "binance_credentials"
+
+    id_credential = Column("IdCredential", Integer, primary_key=True, autoincrement=True)
+    user_id = Column("IdUser", Integer, ForeignKey("User.IdUser"), nullable=False, unique=True)
+    api_key_encrypted = Column("ApiKeyEncrypted", String(512), nullable=False)
+    api_secret_encrypted = Column("ApiSecretEncrypted", String(512), nullable=False)
+    api_key_hint = Column("ApiKeyHint", String(10), nullable=False)
+    testnet = Column("Testnet", Boolean, nullable=False, default=False)
     created_at = Column("CreatedAt", DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column("UpdatedAt", DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 

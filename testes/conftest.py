@@ -85,13 +85,14 @@ def superadmin_user(test_db):
 
 @pytest.fixture
 def mock_token(superadmin_user):
-    return create_access_token(
+    token, _ = create_access_token(
         email=superadmin_user.email,
         username=superadmin_user.username,
         id_user=superadmin_user.id_user,
         role=superadmin_user.role,
         company_id=superadmin_user.company_id,
     )
+    return token
 
 
 @pytest.fixture

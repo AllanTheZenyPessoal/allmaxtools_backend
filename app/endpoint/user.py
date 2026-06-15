@@ -147,21 +147,22 @@ async def checkLogin(user, db):
         if not db_user.active:
             raise HTTPException(status_code=403, detail="User account is disabled")
             
-        # Gerar token JWT com role e company_id e trade_mode
-        access_token_expires = timedelta(minutes=120)
-        access_token = create_access_token(
+        permanent = getattr(user, 'permanent', False)
+        access_token, expires_at = create_access_token(
             email=db_user.email,
             username=db_user.username,
             id_user=db_user.id_user,
             role=getattr(db_user, 'role', 'user'),
             company_id=getattr(db_user, 'company_id', None),
             trade_mode=getattr(user, 'trade_mode', 'live'),
-            expires_delta=access_token_expires
+            permanent=permanent,
         )
-        
+
         return {
             "access_token": access_token,
             "token_type": "bearer",
+            "expired": False,
+            "expires_at": expires_at.isoformat() if expires_at else None,
             "user": {
                 "id_user": db_user.id_user,
                 "username": db_user.username,

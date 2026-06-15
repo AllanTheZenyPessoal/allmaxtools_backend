@@ -34,13 +34,14 @@ def _create_user(db, *, email="trader@test.com", username="trader"):
 
 
 def _make_token(user):
-    return create_access_token(
+    token, _ = create_access_token(
         email=user.email,
         username=user.username,
         id_user=user.id_user,
         role=user.role,
         company_id=user.company_id,
     )
+    return token
 
 
 def _fund_account(db, user_id, balance_usdt):
@@ -352,7 +353,7 @@ class TestBuySellFlow:
 # ---------------------------------------------------------------------------
 
 def _make_paper_token(user):
-    return create_access_token(
+    token, _ = create_access_token(
         email=user.email,
         username=user.username,
         id_user=user.id_user,
@@ -360,6 +361,7 @@ def _make_paper_token(user):
         company_id=user.company_id,
         trade_mode="paper",
     )
+    return token
 
 
 def _fund_paper_account(db, user_id, balance_usdt):

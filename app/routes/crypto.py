@@ -5,9 +5,11 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
-from database import base_models
+from database import base_models, db_models
 from dependencies import get_db
 from endpoint.crypto import crypto_collector_service, websocket_manager
+from services.binance_client import BinanceClient
+from services.encryption import decrypt
 from token_utils.apikey_generator import verify_token
 
 router = APIRouter(tags=["crypto"], prefix="/crypto")
@@ -21,6 +23,22 @@ def _assert_mode_matches_token(token: dict, mode: str) -> None:
             status_code=403,
             detail=f"token is bound to '{token_mode}' mode; request uses '{mode}' mode",
         )
+
+
+def _get_binance_client(db: Session, user_id: int) -> Optional[BinanceClient]:
+    """Return a BinanceClient if the user has stored credentials, else None."""
+    creds = (
+        db.query(db_models.BinanceCredentials)
+        .filter(db_models.BinanceCredentials.user_id == user_id)
+        .first()
+    )
+    if creds is None:
+        return None
+    return BinanceClient(
+        api_key=decrypt(creds.api_key_encrypted),
+        api_secret=decrypt(creds.api_secret_encrypted),
+        testnet=bool(creds.testnet),
+    )
 
 
 @router.post("/play", summary="Iniciar coletor de preços", include_in_schema=False)
@@ -79,8 +97,9 @@ async def price_history(symbol: str, limit: int = 100, db: Session = Depends(get
     summary="Registrar ordem de compra",
     description=(
         "Registra uma compra de criptomoeda. "
-        "Debita o valor em USDT do saldo da conta e atualiza o holding do usuário. "
-        "Use `?mode=paper` para operar em modo simulado."
+        "Se o usuário tiver credenciais Binance cadastradas e `mode=live`, executa uma ordem "
+        "MARKET real na Binance antes de atualizar o saldo interno. "
+        "Use `?mode=paper` para operar em modo 100% simulado (sem tocar na Binance)."
     ),
 )
 async def create_buy_trade(
@@ -90,7 +109,24 @@ async def create_buy_trade(
     mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
-    return crypto_collector_service.register_trade(db, "buy", payload, token["id_user"], mode)
+
+    binance_order_id: Optional[str] = None
+
+    if mode == "live":
+        client = _get_binance_client(db, token["id_user"])
+        if client is not None:
+            if payload.quantity is None:
+                raise HTTPException(status_code=400, detail="quantity is required for Binance live orders.")
+            fill = await client.market_order("BUY", payload.symbol, payload.quantity)
+            binance_order_id = fill["order_id"]
+            payload = payload.model_copy(update={
+                "unit_price_usdt": fill["avg_price"],
+                "quantity": fill["executed_qty"],
+            })
+
+    return crypto_collector_service.register_trade(
+        db, "buy", payload, token["id_user"], mode, binance_order_id=binance_order_id
+    )
 
 
 @router.post(
@@ -99,8 +135,9 @@ async def create_buy_trade(
     summary="Registrar ordem de venda",
     description=(
         "Registra uma venda de criptomoeda. "
-        "Credita o valor em USDT no saldo da conta e reduz o holding do usuário. "
-        "Use `?mode=paper` para operar em modo simulado."
+        "Se o usuário tiver credenciais Binance cadastradas e `mode=live`, executa uma ordem "
+        "MARKET real na Binance antes de atualizar o saldo interno. "
+        "Use `?mode=paper` para operar em modo 100% simulado (sem tocar na Binance)."
     ),
 )
 async def create_sell_trade(
@@ -110,7 +147,24 @@ async def create_sell_trade(
     mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
-    return crypto_collector_service.register_trade(db, "sell", payload, token["id_user"], mode)
+
+    binance_order_id: Optional[str] = None
+
+    if mode == "live":
+        client = _get_binance_client(db, token["id_user"])
+        if client is not None:
+            if payload.quantity is None:
+                raise HTTPException(status_code=400, detail="quantity is required for Binance live orders.")
+            fill = await client.market_order("SELL", payload.symbol, payload.quantity)
+            binance_order_id = fill["order_id"]
+            payload = payload.model_copy(update={
+                "unit_price_usdt": fill["avg_price"],
+                "quantity": fill["executed_qty"],
+            })
+
+    return crypto_collector_service.register_trade(
+        db, "sell", payload, token["id_user"], mode, binance_order_id=binance_order_id
+    )
 
 
 @router.post(

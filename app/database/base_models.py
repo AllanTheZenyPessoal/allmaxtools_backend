@@ -16,7 +16,8 @@ class UserBase(BaseModel):
 class UserLoginRequest(BaseModel):
     email: EmailStr
     password: str
-    trade_mode: str = "live"  # bound mode for the issued token
+    trade_mode: str = "live"
+    permanent: bool = False
 
 class UserRegisterRequest(BaseModel):
     username: str
@@ -115,6 +116,7 @@ class CryptoTradeResponse(BaseModel):
     holding_quantity: Optional[float] = None
     holding_value_usdt: Optional[float] = None
     avg_cost_usdt: Optional[float] = None
+    binance_order_id: Optional[str] = None
 
 
 class CryptoTradeHistoryRequest(BaseModel):
@@ -226,6 +228,62 @@ class PortfolioResponse(BaseModel):
                         "current_value_usdt": 100.49,
                         "updated_at": "2026-06-09T12:00:00",
                     }
+                ],
+            }
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# Binance credentials
+# ---------------------------------------------------------------------------
+
+class BinanceCredentialsRequest(BaseModel):
+    api_key: str = Field(..., min_length=10, example="your_binance_api_key")
+    api_secret: str = Field(..., min_length=10, example="your_binance_api_secret")
+    testnet: bool = Field(False, example=False, description="Use Binance Testnet instead of production.")
+
+
+class BinanceCredentialsResponse(BaseModel):
+    api_key_hint: str = Field(..., example="...XXXX", description="Last 4 chars of the API key.")
+    testnet: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "api_key_hint": "...A3Kz",
+                "testnet": False,
+                "created_at": "2026-06-09T12:00:00",
+                "updated_at": "2026-06-09T12:00:00",
+            }
+        }
+    }
+
+
+class BinanceHealthResponse(BaseModel):
+    connected: bool = Field(..., description="True if Binance API is reachable.")
+    authenticated: bool = Field(..., description="True if the stored API key is valid.")
+    can_trade: bool = Field(..., description="True if the account has SPOT trading enabled.")
+    testnet: bool
+    account_type: Optional[str] = None
+    balances: List[dict] = Field(
+        default=[],
+        description="Non-zero USDT and crypto balances on Binance.",
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "connected": True,
+                "authenticated": True,
+                "can_trade": True,
+                "testnet": False,
+                "account_type": "SPOT",
+                "balances": [
+                    {"asset": "USDT", "free": "1000.00", "locked": "0.00"},
+                    {"asset": "BTC", "free": "0.001", "locked": "0.00"},
                 ],
             }
         }

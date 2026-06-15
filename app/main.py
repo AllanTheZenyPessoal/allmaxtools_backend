@@ -4,7 +4,7 @@ from database import db_models
 from database.database import init_db, get_engine, get_session_local
 
 # Import active routes
-from routes import user, crypto, account
+from routes import user, crypto, account, binance
 
 from token_utils.token_route import router as token_router
 
@@ -30,6 +30,13 @@ app = FastAPI(
         {
             "name": "user",
             "description": "Gerenciamento de usuários.",
+        },
+        {
+            "name": "binance",
+            "description": (
+                "Gerenciamento de credenciais Binance e verificação de saúde da conta. "
+                "Os trades live com credenciais cadastradas são executados via MARKET order na Binance."
+            ),
         },
     ],
 )
@@ -90,6 +97,7 @@ app.include_router(token_router)
 app.include_router(user.router)
 app.include_router(crypto.router)
 app.include_router(account.router)
+app.include_router(binance.router)
 
 @app.get("/")
 async def root():

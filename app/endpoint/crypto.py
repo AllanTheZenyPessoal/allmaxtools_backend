@@ -289,6 +289,7 @@ class CryptoCollectorService:
         payload: base_models.CryptoTradeCreateRequest,
         user_id: int,
         trade_mode: str = "live",
+        binance_order_id: Optional[str] = None,
     ) -> base_models.CryptoTradeResponse:
         normalized_type = trade_type.lower()
         if normalized_type not in ["buy", "sell"]:
@@ -312,7 +313,10 @@ class CryptoCollectorService:
         if trade_mode == "live":
             assert_exchange_healthy()
             check_rate_limit(user_id, normalized_symbol)
-            validate_price_against_market(db, normalized_symbol, payload.unit_price_usdt)
+            # Skip price deviation check when the order was already filled by Binance
+            # (fill price IS the market price; our snapshot check would be redundant)
+            if binance_order_id is None:
+                validate_price_against_market(db, normalized_symbol, payload.unit_price_usdt)
 
         executed_at = (payload.executed_at or datetime.utcnow()).replace(tzinfo=None)
         total_usdt = quantity * payload.unit_price_usdt
@@ -431,6 +435,7 @@ class CryptoCollectorService:
                 unit_price_usdt=payload.unit_price_usdt,
                 total_usdt=total_usdt,
                 executed_at=executed_at,
+                binance_order_id=binance_order_id,
             )
             db.add(trade)
             db.flush()
@@ -1053,6 +1058,7 @@ class CryptoCollectorService:
             holding_quantity=cast(Optional[float], getattr(holding, "quantity", None)),
             holding_value_usdt=cast(Optional[float], getattr(holding, "current_value_usdt", None)),
             avg_cost_usdt=cast(Optional[float], getattr(holding, "avg_cost_usdt", None)),
+            binance_order_id=cast(Optional[str], getattr(row_any, "binance_order_id", None)),
         )
 
 

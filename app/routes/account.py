@@ -1,3 +1,4 @@
+import traceback
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -79,7 +80,13 @@ async def deposit_balance(
     mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
-    return crypto_collector_service.deposit_balance(db, token, payload, mode)
+    try:
+        return crypto_collector_service.deposit_balance(db, token, payload, mode)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post(
@@ -95,4 +102,10 @@ async def withdraw_balance(
     mode: str = Query("live", pattern="^(paper|live)$", description="Modo de operação: `live` (real) ou `paper` (simulado)."),
 ):
     _assert_mode_matches_token(token, mode)
-    return crypto_collector_service.withdraw_balance(db, token, payload, mode)
+    try:
+        return crypto_collector_service.withdraw_balance(db, token, payload, mode)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(exc))
